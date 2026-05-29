@@ -29,6 +29,11 @@ export type FitAnalysis = {
   recommendations: string[];
 };
 
+/** Fit analysis persisted per application packet. */
+export type FitAnalysisRecord = FitAnalysis & {
+  packetId: string;
+};
+
 export type ChangeLogItem = {
   id: string;
   packetId: string;

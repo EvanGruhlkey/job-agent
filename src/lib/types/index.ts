@@ -13,5 +13,11 @@ export type {
   ChangeLogItem,
   ChangeLogType,
   FitAnalysis,
+  FitAnalysisRecord,
   FitMatch,
 } from "./application";
+
+export type {
+  GitHubEvidenceProfile,
+  GitHubRepoSnapshot,
+} from "./github";
