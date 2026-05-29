@@ -7,6 +7,7 @@ export type EvidenceSourceType = "resume" | "github" | "user_input";
  */
 export type EvidenceItem = {
   id: string;
+  packetId: string;
   sourceType: EvidenceSourceType;
   sourceName: string;
   skill: string;

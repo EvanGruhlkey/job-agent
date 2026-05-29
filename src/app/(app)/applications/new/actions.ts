@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { runPacketAnalysis } from "@/lib/evidence/run-packet-analysis";
 import { createApplicationPacket } from "@/lib/storage/application-packet";
 import { createJobPosting } from "@/lib/storage/job-posting";
 import { getMasterResume } from "@/lib/storage/master-resume";
@@ -63,7 +64,10 @@ export async function createApplication(
     status: "draft",
   });
 
+  await runPacketAnalysis(packet.id);
+
   revalidatePath("/dashboard");
   revalidatePath("/applications");
+  revalidatePath(`/applications/${packet.id}`);
   redirect(`/applications/${packet.id}`);
 }

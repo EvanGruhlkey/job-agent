@@ -145,18 +145,34 @@ export async function getApplicationPacketDetail(
   const packet = store.applicationPackets.find((p) => p.id === id);
   if (!packet) return null;
 
+  const fitAnalysis =
+    store.fitAnalyses.find((f) => f.packetId === id) ?? null;
+
   const evidenceIds = new Set(
     store.changeLogItems
       .filter((c) => c.packetId === id)
       .flatMap((c) => c.evidenceIds),
   );
+  if (fitAnalysis) {
+    for (const match of [
+      ...fitAnalysis.strongMatches,
+      ...fitAnalysis.weakMatches,
+    ]) {
+      for (const evidenceId of match.evidenceIds) {
+        evidenceIds.add(evidenceId);
+      }
+    }
+  }
+
+  const evidenceForPacket = store.evidenceItems.filter(
+    (e) => e.packetId === id || evidenceIds.has(e.id),
+  );
 
   return {
     ...packet,
-    fitAnalysis:
-      store.fitAnalyses.find((f) => f.packetId === id) ?? null,
+    fitAnalysis,
     changeLog: store.changeLogItems.filter((c) => c.packetId === id),
-    evidence: store.evidenceItems.filter((e) => evidenceIds.has(e.id)),
+    evidence: evidenceForPacket,
     resumeVersions: store.resumeVersions.filter(
       (v) => v.applicationPacketId === id,
     ),

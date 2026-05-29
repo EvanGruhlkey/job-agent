@@ -99,8 +99,16 @@ function OverviewTab({ data }: { data: ApplicationPageData }) {
         <MatchList
           title="Strong matches"
           matches={analysis?.strongMatches ?? []}
-          emptyMessage="No strong matches yet. Run fit analysis in a later step."
+          emptyMessage="No strong matches yet."
         />
+        <MatchList
+          title="Weak matches"
+          matches={analysis?.weakMatches ?? []}
+          emptyMessage="No weak matches."
+        />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
         <div>
           <h3 className="text-sm font-medium text-zinc-900">Missing skills</h3>
           {analysis?.missingSkills.length ? (
@@ -119,6 +127,17 @@ function OverviewTab({ data }: { data: ApplicationPageData }) {
               None identified yet.
             </p>
           )}
+        </div>
+        <div>
+          <h3 className="text-sm font-medium text-zinc-900">Evidence used</h3>
+          <p className="mt-2 text-sm text-zinc-600">
+            {packet.evidence.length} item{packet.evidence.length === 1 ? "" : "s"}{" "}
+            from resume
+            {packet.evidence.some((e) => e.sourceType === "github")
+              ? " and GitHub"
+              : ""}
+            .
+          </p>
         </div>
       </div>
 

@@ -2,6 +2,7 @@ export type { ApplyKitStore } from "./schema";
 export { createEmptyStore } from "./empty-store";
 export { createId, nowIso } from "./id";
 export { getStorePath, loadStore, saveStore, withStore } from "./persist";
+export { persistPacketAnalysis } from "./packet-analysis";
 
 export {
   getUserProfile,
