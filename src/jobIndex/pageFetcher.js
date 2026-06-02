@@ -17,6 +17,22 @@ const DEFAULT_TIMEOUT_MS = 9000;
 
 export async function fetchPageWithFallback(url, options = {}) {
   const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
+
+  if (options.forceBrowser) {
+    try {
+      return await fetchRenderedPage(url, timeoutMs, options);
+    } catch (error) {
+      const staticPage = await retry(() => fetchStaticPage(url, timeoutMs), {
+        attempts: options.attempts || 1,
+        label: url
+      });
+      return {
+        ...staticPage,
+        errors: [...(staticPage.errors || []), `forced rendered fetch failed: ${error.message}`]
+      };
+    }
+  }
+
   const staticPage = await retry(() => fetchStaticPage(url, timeoutMs), {
     attempts: options.attempts || 2,
     label: url
@@ -33,7 +49,7 @@ export async function fetchPageWithFallback(url, options = {}) {
   if (options.browserFallback === false) return staticPage;
 
   try {
-    return await fetchRenderedPage(url, timeoutMs);
+    return await fetchRenderedPage(url, timeoutMs, options);
   } catch (error) {
     return {
       ...staticPage,
@@ -74,7 +90,7 @@ async function fetchStaticPage(url, timeoutMs) {
   };
 }
 
-async function fetchRenderedPage(url, timeoutMs) {
+async function fetchRenderedPage(url, timeoutMs, options = {}) {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({
     userAgent: USER_AGENT,
@@ -85,6 +101,9 @@ async function fetchRenderedPage(url, timeoutMs) {
     const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
     await page.waitForLoadState("networkidle", { timeout: Math.min(timeoutMs, 6000) }).catch(() => {});
     await page.waitForTimeout(800);
+    if (options.scrollToBottom) {
+      await scrollRenderedPage(page, options);
+    }
 
     const html = await page.content();
     const text = cleanText(await page.locator("body").innerText({ timeout: 3000 }).catch(() => html));
@@ -106,6 +125,16 @@ async function fetchRenderedPage(url, timeoutMs) {
   } finally {
     await browser.close().catch(() => {});
   }
+}
+
+async function scrollRenderedPage(page, options = {}) {
+  const rounds = Math.max(1, Math.min(12, Number(options.scrollRounds) || 4));
+  for (let index = 0; index < rounds; index += 1) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(() => {});
+    await page.waitForTimeout(Math.max(250, Math.min(1500, Number(options.scrollDelayMs) || 650)));
+  }
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+  await page.waitForTimeout(250);
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {

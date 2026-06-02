@@ -6,7 +6,7 @@ import {
   GENERAL_JOB_BOARD_DOMAINS,
   GITHUB_DISCOVERY_URLS,
   GITHUB_SEARCH_TEMPLATES,
-  MAJOR_HANDOFF_JOB_SOURCES,
+  MAJOR_JOB_BOARD_SOURCES,
   NICHE_BOARD_DOMAINS,
   REMOTE_BOARD_DOMAINS,
   renderTemplate,
@@ -30,14 +30,14 @@ import {
 } from "./utils.js";
 
 export function jobIndexerSourceCatalogForClient() {
-  return buildJobSourceAdapters().map((adapter) => ({
-      id: adapter.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-      name: adapter.name,
-      mode: adapter.mode || "public-fetch",
-      type: adapter.type,
-      sourcePageExamples: [],
-      detailUrlPatterns: [],
-      listingUrlPatterns: []
+  return MAJOR_JOB_BOARD_SOURCES.map((source, index) => ({
+    id: `channel-${index + 1}`,
+    name: `Listing channel ${index + 1}`,
+    mode: "public-browser-fetch",
+    type: "major_job_board",
+    sourcePageExamples: [],
+    detailUrlPatterns: [],
+    listingUrlPatterns: []
   }));
 }
 
@@ -64,7 +64,7 @@ function createMajorBoardAdapter() {
       const seeded = input.seeds?.length ? await discoverFromMajorSeeds(input, this) : [];
       if (input.seeds?.length && !input.searchAllSources) return seeded.slice(0, input.maxLinks || 80);
 
-      const queries = MAJOR_HANDOFF_JOB_SOURCES.flatMap((source) =>
+      const queries = MAJOR_JOB_BOARD_SOURCES.flatMap((source) =>
         source.queryTemplates.map((template) =>
           renderTemplate(template, {
             targetTitle: input.targetTitle,
@@ -463,7 +463,7 @@ async function discoverMajorFromQueries(queries, adapter, input, options = {}) {
 }
 
 async function discoverFromMajorSearchPages(input, adapter) {
-  const pages = await promisePool(MAJOR_HANDOFF_JOB_SOURCES, 2, async (source) => {
+  const pages = await promisePool(MAJOR_JOB_BOARD_SOURCES, 2, async (source) => {
     const searchUrl = source.searchUrl(input);
     try {
       const page = await fetchPageWithFallback(searchUrl, {
@@ -688,7 +688,7 @@ function safePath(url) {
 
 function majorJobSourceForUrl(url) {
   const hostname = hostOf(url);
-  return MAJOR_HANDOFF_JOB_SOURCES.find((source) =>
+  return MAJOR_JOB_BOARD_SOURCES.find((source) =>
     source.domains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
   );
 }

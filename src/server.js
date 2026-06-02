@@ -19,12 +19,6 @@ import {
   scoreJobForQuery,
   sha1
 } from "./jobIndex/utils.js";
-import {
-  getAgenticSession,
-  resumeAgenticSession,
-  startAgenticSearch,
-  stopAgenticSession
-} from "./agenticBrowserSearch.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,12 +56,9 @@ app.get("/api/index/jobs", async (req, res) => {
 
 app.post("/api/index/discover", async (req, res) => {
   try {
-    const targetTitle = String(req.body.targetTitle || "").trim();
+    const targetTitle = normalizeSearchTitle(req.body.targetTitle);
     const location = String(req.body.location || "").trim();
     const maxJobs = clampNumber(req.body.maxJobs, 1, 250, 25);
-    const searchAllSources = parseBoolean(req.body.searchAllSources, false);
-    const recentOnly = parseBoolean(req.body.recentOnly, true);
-    const recentWindowDays = clampNumber(req.body.recentWindowDays, 1, 365, 14);
     const seeds = Array.isArray(req.body.seeds) ? req.body.seeds : [];
 
     if (!targetTitle) {
@@ -78,9 +69,6 @@ app.post("/api/index/discover", async (req, res) => {
       targetTitle,
       location,
       maxJobs,
-      searchAllSources,
-      recentOnly,
-      recentWindowDays,
       seeds
     });
 
@@ -91,86 +79,27 @@ app.post("/api/index/discover", async (req, res) => {
   }
 });
 
-app.post("/api/search", upload.single("resumeFile"), async (req, res) => {
+app.post("/api/search", async (req, res) => {
   try {
-    const targetTitle = String(req.body.targetTitle || "").trim();
+    const targetTitle = normalizeSearchTitle(req.body.targetTitle);
     const location = String(req.body.location || "").trim();
-    const resumeText = String(req.body.resumeText || "").trim();
     const maxJobs = clampNumber(req.body.maxJobs, 1, 200, 25);
-    const searchAllSources = parseBoolean(req.body.searchAllSources, false);
-    const recentOnly = parseBoolean(req.body.recentOnly, true);
-    const recentWindowDays = clampNumber(req.body.recentWindowDays, 1, 365, 14);
 
     if (!targetTitle) {
       return res.status(400).json({ error: "Enter the job title you want." });
     }
 
-    const extractedResume = await extractResumeInput({
-      typedText: resumeText,
-      file: req.file
-    });
-
-    if (!extractedResume.text || extractedResume.text.length < 80) {
-      return res.status(400).json({
-        error: "Add a longer resume by pasting text or uploading a supported file."
-      });
-    }
-
     const search = await runJobDiscovery({
       targetTitle,
       location,
-      maxJobs,
-      searchAllSources,
-      recentOnly,
-      recentWindowDays
-    });
-
-    const jobs = await mapWithConcurrency(search.jobs, 8, async (job) => {
-      const fallbackTailoring = tailorResumeForJob({
-        resumeText: extractedResume.text,
-        job,
-        targetTitle
-      });
-
-      return {
-        ...job,
-        tailoring: await tailorResumeWithLlm({
-          resumeText: extractedResume.text,
-          job,
-          targetTitle,
-          fallbackTailoring
-        })
-      };
+      maxJobs
     });
 
     res.json({
-      resume: {
-        source: extractedResume.source,
-        characters: extractedResume.text.length,
-        text: extractedResume.text
-      },
       targetTitle,
       location,
-      jobs,
-      agentReports: search.sourceReports.map((report) => ({
-        id: report.source,
-        name: report.source,
-        description: `${report.type} adapter`,
-        mode: report.status,
-        searched: report.discovered,
-        elapsedMs: report.elapsedMs,
-        errors: report.failures,
-        results: report.extracted
-      })),
-      coordinator: {
-        mode: "indexer",
-        model: null,
-        notes: [
-          `Indexed ${search.jobs.length} public jobs through the adapter pipeline.`,
-          "LinkedIn and Indeed are included as human-review handoff links because they restrict automated scraping.",
-          `Pipeline: ${search.pipeline.join(" -> ")}`
-        ]
-      },
+      requestedJobs: maxJobs,
+      jobs: search.jobs,
       generatedAt: new Date().toISOString()
     });
   } catch (error) {
@@ -185,7 +114,7 @@ app.post("/api/search", upload.single("resumeFile"), async (req, res) => {
 app.post("/api/index/jobs/:id/tailor", upload.single("resumeFile"), async (req, res) => {
   try {
     const resumeText = String(req.body.resumeText || "").trim();
-    const targetTitle = String(req.body.targetTitle || "").trim();
+    const targetTitle = normalizeSearchTitle(req.body.targetTitle);
     const extractedResume = await extractResumeInput({
       typedText: resumeText,
       file: req.file
@@ -215,72 +144,6 @@ app.post("/api/index/jobs/:id/tailor", upload.single("resumeFile"), async (req, 
   } catch (error) {
     res.status(500).json({ error: "Could not tailor the indexed job.", detail: error.message });
   }
-});
-
-app.post("/api/agentic/start", upload.single("resumeFile"), async (req, res) => {
-  try {
-    const targetTitle = String(req.body.targetTitle || "").trim();
-    const location = String(req.body.location || "").trim();
-    const resumeText = String(req.body.resumeText || "").trim();
-    const maxJobs = clampNumber(req.body.maxJobs, 1, 200, 25);
-    const recentWindowDays = clampNumber(req.body.recentWindowDays, 1, 365, 14);
-
-    if (!targetTitle) {
-      return res.status(400).json({ error: "Enter the job title you want." });
-    }
-
-    const extractedResume = await extractResumeInput({
-      typedText: resumeText,
-      file: req.file
-    });
-
-    if (!extractedResume.text || extractedResume.text.length < 80) {
-      return res.status(400).json({
-        error: "Add a longer resume by pasting text or uploading a supported file."
-      });
-    }
-
-    const session = startAgenticSearch({
-      resumeText: extractedResume.text,
-      targetTitle,
-      location,
-      maxJobs,
-      recentWindowDays
-    });
-
-    res.json({
-      resume: {
-        source: extractedResume.source,
-        characters: extractedResume.text.length,
-        text: extractedResume.text
-      },
-      session
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      error: "The browser-agent search could not start.",
-      detail: error.message
-    });
-  }
-});
-
-app.get("/api/agentic/:id", (req, res) => {
-  const session = getAgenticSession(req.params.id);
-  if (!session) return res.status(404).json({ error: "Agentic search session not found." });
-  res.json({ session });
-});
-
-app.post("/api/agentic/:id/resume", (req, res) => {
-  const session = resumeAgenticSession(req.params.id);
-  if (!session) return res.status(404).json({ error: "Agentic search session not found." });
-  res.json({ session });
-});
-
-app.post("/api/agentic/:id/stop", async (req, res) => {
-  const session = await stopAgenticSession(req.params.id);
-  if (!session) return res.status(404).json({ error: "Agentic search session not found." });
-  res.json({ session });
 });
 
 app.post("/api/major-board/snapshot", express.json({ limit: "1mb" }), async (req, res) => {
@@ -429,6 +292,18 @@ function parseBoolean(value, fallback = false) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "boolean") return value;
   return ["true", "1", "on", "yes"].includes(String(value).toLowerCase());
+}
+
+function normalizeSearchTitle(value = "") {
+  return String(value || "")
+    .replace(/\benginner\b/gi, "engineer")
+    .replace(/\benginerr\b/gi, "engineer")
+    .replace(/\bengeneer\b/gi, "engineer")
+    .replace(/\bsofware\b/gi, "software")
+    .replace(/\bsoftwear\b/gi, "software")
+    .replace(/\bdevelopper\b/gi, "developer")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isLinkedInOrIndeedUrl(url) {

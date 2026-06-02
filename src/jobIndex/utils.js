@@ -169,7 +169,7 @@ export function extractCandidateLinksFromHtml(html, baseUrl, { includeSameHost =
 }
 
 export function matchesQueryIntent(job, { targetTitle = "", location = "" } = {}) {
-  const titleTerms = importantTerms(targetTitle);
+  const titleTerms = importantTerms(normalizeCommonTitleTypos(targetTitle));
   const locationTerms = importantTerms(location);
   const titleLower = normalizeComparableText(job.title);
   const locationText = normalizeComparableText(`${job.location || ""} ${job.description || ""}`);
@@ -293,7 +293,7 @@ export function compareJobsByFreshness(a, b) {
 export function scoreJobForQuery(job, { targetTitle = "", location = "" } = {}) {
   const haystack = `${job.title || ""} ${job.company || ""} ${job.location || ""} ${job.description || ""} ${job.url || ""}`.toLowerCase();
   const title = normalizeComparableText(job.title);
-  const terms = targetTitle.toLowerCase().split(/\W+/).filter((term) => term.length > 2);
+  const terms = normalizeCommonTitleTypos(targetTitle).toLowerCase().split(/\W+/).filter((term) => term.length > 2);
   const locationTerms = location.toLowerCase().split(/\W+/).filter((term) => term.length > 2);
   let score = 0;
 
@@ -321,6 +321,16 @@ function importantTerms(value) {
     .toLowerCase()
     .split(/\W+/)
     .filter((term) => term.length > 2 && !stop.has(term));
+}
+
+function normalizeCommonTitleTypos(value = "") {
+  return String(value || "")
+    .replace(/\benginner\b/gi, "engineer")
+    .replace(/\benginerr\b/gi, "engineer")
+    .replace(/\bengeneer\b/gi, "engineer")
+    .replace(/\bsofware\b/gi, "software")
+    .replace(/\bsoftwear\b/gi, "software")
+    .replace(/\bdevelopper\b/gi, "developer");
 }
 
 function hasTerm(text, term) {

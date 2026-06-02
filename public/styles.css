@@ -131,6 +131,13 @@ textarea:focus {
   gap: 10px;
 }
 
+.search-hint {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 .search-options {
   display: grid;
   gap: 8px;
@@ -319,6 +326,14 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.1);
 }
 
+.job-description {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 0.92rem;
+  color: var(--ink);
+}
+
 .job-card h3 {
   margin: 0;
   font-size: 0.96rem;
@@ -345,127 +360,9 @@ textarea:focus {
   font-weight: 750;
 }
 
-.handoff-badge {
-  background: #fff3e4;
-  color: #8a5412;
-}
-
-.handoff-notice,
-.manual-tailor {
-  display: grid;
-  gap: 10px;
-  border: 1px solid #ead2aa;
-  border-radius: 6px;
-  background: #fffaf0;
-  padding: 12px;
-}
-
-.handoff-notice p {
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.handoff-notice a {
-  color: var(--blue);
-  font-weight: 750;
-}
-
-.manual-description-label {
-  display: grid;
-  gap: 8px;
-  color: var(--ink);
-  font-weight: 750;
-}
-
-.manual-description {
-  width: 100%;
-  min-height: 220px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px;
-  color: var(--ink);
-  background: #fcfcfa;
-}
-
-.html-capture-panel {
-  display: grid;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px;
-  background: #f7faf9;
-}
-
-.capture-status,
-.capture-paths {
-  color: var(--muted);
-  font-size: 0.84rem;
-  line-height: 1.45;
-}
-
-.capture-meta,
-.capture-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.html-output {
-  width: 100%;
-  min-height: 260px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 12px;
-  color: var(--ink);
-  background: #fcfcfa;
-  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
-  font-size: 0.78rem;
-  line-height: 1.4;
-}
-
-.capture-links {
-  display: grid;
-  gap: 7px;
-  border-top: 1px solid var(--line);
-  padding-top: 10px;
-}
-
-.capture-links a {
-  color: var(--blue);
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.secondary-action {
-  justify-self: start;
-  min-height: 38px;
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  background: #fff;
-  color: var(--accent-strong);
-  font-weight: 800;
-  cursor: pointer;
-  padding: 0 12px;
-}
-
-.secondary-action:hover {
-  background: #edf3f2;
-}
-
 .full-width-action {
   justify-self: stretch;
   justify-content: center;
-}
-
-.browser-agent-panel {
-  display: grid;
-  gap: 10px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  padding: 12px 0;
 }
 
 .source-config-panel {
@@ -503,43 +400,6 @@ textarea:focus {
 .source-row span {
   color: var(--muted);
   font-size: 0.74rem;
-}
-
-.browser-agent-panel[hidden] {
-  display: none;
-}
-
-.agent-log {
-  display: grid;
-  gap: 6px;
-  max-height: 160px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fcfcfa;
-  padding: 10px;
-}
-
-.log-line {
-  display: grid;
-  grid-template-columns: 82px 1fr;
-  gap: 8px;
-  color: var(--ink);
-  font-size: 0.78rem;
-  line-height: 1.35;
-}
-
-.log-line span {
-  color: var(--muted);
-}
-
-.log-error,
-.log-warn {
-  color: var(--danger);
-}
-
-.log-job {
-  color: var(--accent-strong);
 }
 
 .job-detail {

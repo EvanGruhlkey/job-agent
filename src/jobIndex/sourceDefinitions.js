@@ -55,18 +55,17 @@ export const RESTRICTED_JOB_SOURCE_DOMAINS = [
   "twitter.com"
 ];
 
-export const MAJOR_HANDOFF_JOB_SOURCES = [
+export const MAJOR_JOB_BOARD_SOURCES = [
   {
     id: "linkedin",
     name: "LinkedIn",
     domains: ["linkedin.com"],
     reason:
-      "LinkedIn restricts automated scraping. Open the result yourself, use LinkedIn's newest filter, then paste the visible job description back here for tailoring.",
-    searchUrl: ({ targetTitle, location = "", recentWindowDays = 14 }) => {
+      "Public search listing page.",
+    searchUrl: ({ targetTitle, location = "" }) => {
       const params = new URLSearchParams({
         keywords: targetTitle,
-        location: location || "United States",
-        f_TPR: linkedInFreshnessParam(recentWindowDays)
+        location: location || "United States"
       });
       return `https://www.linkedin.com/jobs/search/?${params.toString()}`;
     },
@@ -82,12 +81,11 @@ export const MAJOR_HANDOFF_JOB_SOURCES = [
     name: "Indeed",
     domains: ["indeed.com"],
     reason:
-      "Indeed aggressively blocks automated scraping. Open the result yourself, keep sort by date enabled, then paste the visible job description back here for tailoring.",
-    searchUrl: ({ targetTitle, location = "", recentWindowDays = 14 }) => {
+      "Public search listing page.",
+    searchUrl: ({ targetTitle, location = "" }) => {
       const params = new URLSearchParams({
         q: targetTitle,
         l: location || "United States",
-        fromage: String(Math.max(1, Math.min(14, Number(recentWindowDays) || 14))),
         sort: "date"
       });
       return `https://www.indeed.com/jobs?${params.toString()}`;
@@ -204,13 +202,6 @@ export function renderTemplate(template, { targetTitle, location = "" }) {
     .replaceAll("{title}", targetTitle)
     .replaceAll("{location}", location || "United States")
     .replaceAll("{year}", String(CURRENT_YEAR));
-}
-
-function linkedInFreshnessParam(windowDays) {
-  const days = Number(windowDays) || 14;
-  if (days <= 1) return "r86400";
-  if (days <= 7) return "r604800";
-  return "r2592000";
 }
 
 function ats(id, name, domains, detailPathPatterns, listingPathPatterns) {
