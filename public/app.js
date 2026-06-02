@@ -5,11 +5,19 @@ const jobsList = document.querySelector("#jobsList");
 const jobCount = document.querySelector("#jobCount");
 const jobDetail = document.querySelector("#jobDetail");
 const jobLink = document.querySelector("#jobLink");
+const sortRecentBtn = document.querySelector("#sortRecentBtn");
 
 let currentJobs = [];
 let selectedJob = null;
+let sortBy = "score";
 
 loadImportRunFromUrl();
+
+sortRecentBtn.addEventListener("click", () => {
+  sortBy = sortBy === "recent" ? "score" : "recent";
+  updateSortButton();
+  applySort();
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -35,6 +43,8 @@ form.addEventListener("submit", async (event) => {
     }
 
     currentJobs = payload.jobs || [];
+    sortBy = "score";
+    updateSortButton();
     renderJobs(currentJobs);
 
     if (currentJobs.length) {
@@ -65,6 +75,8 @@ async function loadImportRunFromUrl() {
     if (!response.ok) throw new Error(payload.error || "Could not load imported jobs.");
 
     currentJobs = payload.jobs || [];
+    sortBy = "score";
+    updateSortButton();
     renderJobs(currentJobs);
     if (currentJobs.length) {
       selectJob(currentJobs[0].url);
@@ -136,9 +148,50 @@ function selectJob(url) {
   jobLink.classList.remove("disabled");
 }
 
+function applySort() {
+  if (!currentJobs.length) return;
+
+  const selectedUrl = selectedJob?.url;
+  const sorted = [...currentJobs].sort(compareJobsForSort);
+  currentJobs = sorted;
+  renderJobs(currentJobs);
+
+  if (selectedUrl && currentJobs.some((job) => job.url === selectedUrl)) {
+    selectJob(selectedUrl);
+  } else if (currentJobs.length) {
+    selectJob(currentJobs[0].url);
+  }
+}
+
+function compareJobsForSort(a, b) {
+  if (sortBy === "recent") {
+    return postedTime(b.datePosted) - postedTime(a.datePosted) || (b.score || 0) - (a.score || 0);
+  }
+  return (b.score || 0) - (a.score || 0) || postedTime(b.datePosted) - postedTime(a.datePosted);
+}
+
+function postedTime(value) {
+  if (!value) return 0;
+  const dateOnly = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const parsed = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.getTime() : 0;
+}
+
+function updateSortButton() {
+  const hasJobs = currentJobs.length > 0;
+  sortRecentBtn.disabled = !hasJobs;
+  sortRecentBtn.classList.toggle("active", sortBy === "recent");
+  sortRecentBtn.textContent = sortBy === "recent" ? "Best match" : "Most recent";
+  sortRecentBtn.setAttribute("aria-pressed", String(sortBy === "recent"));
+}
+
 function clearResults() {
   currentJobs = [];
   selectedJob = null;
+  sortBy = "score";
+  updateSortButton();
   jobCount.textContent = "0 found";
   jobsList.className = "jobs-list empty-state";
   jobsList.textContent = "Searching...";
