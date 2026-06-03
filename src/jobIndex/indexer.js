@@ -3,9 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as cheerio from "cheerio";
+import { buildJobSourceAdapters } from "./adapters.js";
 import { upsertJobs, searchJobDatabase, getIndexedJob } from "./database.js";
 import { fetchPageWithFallback } from "./pageFetcher.js";
-import { MAJOR_JOB_BOARD_SOURCES } from "./sourceDefinitions.js";
+import { isAdditionalListingSourceAdapter } from "./listingBoardSources.js";
+import { FAST_PUBLIC_JOB_SEEDS, MAJOR_JOB_BOARD_SOURCES } from "./sourceDefinitions.js";
 import {
   classifyJob,
   cleanText,
@@ -24,6 +26,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MAJOR_BOARD_HTML_DIR = path.join(__dirname, "..", "..", "data", "major-board-html");
+const MAJOR_BOARD_SOURCE_NAMES = new Set(MAJOR_JOB_BOARD_SOURCES.map((source) => source.name));
 
 /**
  * @typedef {Object} DiscoverJobsInput
@@ -45,12 +48,21 @@ export async function runJobDiscovery(input) {
     seeds: normalizeSeeds(input.seeds || [])
   };
 
-  const pool = await discoverVisibleMajorBoardJobs(discoveryInput, MAJOR_JOB_BOARD_SOURCES);
-  const jobs = selectMajorBoardJobs(pool, discoveryInput);
-  const sourceReports = buildMajorBoardSourceReports(pool, jobs, startedAt);
+  const listingPool = await discoverVisibleMajorBoardJobs(discoveryInput, MAJOR_JOB_BOARD_SOURCES);
+  const additionalDiscovery = await discoverAdditionalListingJobs(discoveryInput);
+  const pool = uniqueBy([...listingPool, ...additionalDiscovery.jobs], resultDedupeKey);
+  const jobs = selectRankedJobs(pool, discoveryInput);
+  const sourceReports = [
+    ...buildMajorBoardSourceReports(pool, jobs, startedAt),
+    ...buildAdditionalSourceReports(additionalDiscovery.reports, jobs)
+  ];
+  const sourceNames = [
+    ...MAJOR_JOB_BOARD_SOURCES.map((source) => source.name),
+    ...additionalDiscovery.reports.map((report) => report.source)
+  ];
   const savedJobs = await upsertJobs(jobs, {
     runId,
-    sourceNames: MAJOR_JOB_BOARD_SOURCES.map((source) => source.name),
+    sourceNames,
     searchKey: `${targetTitle || ""}|${input.location || ""}`.toLowerCase()
   });
 
@@ -70,6 +82,124 @@ export async function runJobDiscovery(input) {
   };
 }
 
+async function discoverAdditionalListingJobs(input) {
+  const maxJobs = Math.max(1, Number(input.maxJobs) || 25);
+  const maxLinksPerSource = Math.min(60, Math.max(12, maxJobs * 2));
+  const maxExtractPerSource = Math.min(18, Math.max(6, Math.ceil(maxJobs / 3)));
+  const adapters = buildJobSourceAdapters().filter(isAdditionalListingSourceAdapter);
+
+  const results = await promisePool(adapters, 2, async (adapter) => {
+    const startedAt = Date.now();
+    const failures = [];
+
+    try {
+      const links = uniqueBy(
+        await adapter.discoverJobs({
+          ...input,
+          seeds: seedsForAdapter(adapter, input.seeds),
+          maxLinks: maxLinksPerSource,
+          recentWindowDays: input.recentWindowDays || 14,
+          searchAllSources: Boolean(input.searchAllSources)
+        }),
+        (link) => normalizeUrl(link.url)
+      );
+      const candidates = prioritizeDiscoveredLinks(links, input).slice(0, maxExtractPerSource);
+      const extracted = await promisePool(candidates, 4, async (link) => {
+        try {
+          const raw = await adapter.extractJob(link.url);
+          const normalized = adapter.normalize({
+            ...raw,
+            input,
+            datePosted: raw.datePosted || link.datePosted || "",
+            url: raw.url || link.url
+          });
+          return usableAdditionalJob(normalized, input) ? normalized : null;
+        } catch (error) {
+          failures.push(`${link.url}: ${error.message}`);
+          return null;
+        }
+      });
+
+      return {
+        source: adapter.name,
+        type: adapter.type,
+        discovered: links.length,
+        extracted: extracted.filter(Boolean).length,
+        failures: failures.slice(0, 8),
+        elapsedMs: Date.now() - startedAt,
+        jobs: extracted.filter(Boolean)
+      };
+    } catch (error) {
+      return {
+        source: adapter.name,
+        type: adapter.type,
+        discovered: 0,
+        extracted: 0,
+        failures: [error.message],
+        elapsedMs: Date.now() - startedAt,
+        jobs: []
+      };
+    }
+  });
+
+  return {
+    jobs: uniqueBy(results.flatMap((result) => result.jobs), resultDedupeKey),
+    reports: results.map(({ jobs, ...report }) => report)
+  };
+}
+
+function seedsForAdapter(adapter, inputSeeds = []) {
+  return [...(inputSeeds || []), ...FAST_PUBLIC_JOB_SEEDS]
+    .filter((seed) => adapter.canHandle(seed.url || seed));
+}
+
+function buildAdditionalSourceReports(reports, jobs) {
+  return reports.map((report, index) => ({
+    source: report.source,
+    label: `Public source ${index + 1}`,
+    type: report.type,
+    status: report.failures.length && !report.extracted ? "limited" : "ok",
+    discovered: report.discovered,
+    extracted: jobs.filter((job) => job.source === report.source).length,
+    failures: report.failures,
+    elapsedMs: report.elapsedMs
+  }));
+}
+
+function prioritizeDiscoveredLinks(links, input) {
+  return [...links].sort((a, b) => {
+    const aScore = scoreJobForQuery(linkAsJob(a), input);
+    const bScore = scoreJobForQuery(linkAsJob(b), input);
+    return bScore - aScore;
+  });
+}
+
+function linkAsJob(link) {
+  return {
+    title: link.title || "",
+    company: "",
+    location: "",
+    description: link.snippet || "",
+    url: link.url || "",
+    datePosted: link.datePosted || ""
+  };
+}
+
+function usableAdditionalJob(job, input) {
+  if (!job?.url || !isUsableListingTitle(job.title) || job.blocked) return false;
+  return matchesQueryIntent(job, input);
+}
+
+function isUsableListingTitle(title = "") {
+  const cleaned = cleanText(title);
+  if (!cleaned || cleaned.length < 4 || cleaned.length > 160) return false;
+  const lower = cleaned.toLowerCase();
+  if (["apply", "view job", "learn more", "see more", "read more", "all jobs", "remote jobs", "search jobs"].includes(lower)) {
+    return false;
+  }
+  return !/^(remote|categories|sign in|login|search|home)$/i.test(cleaned);
+}
+
 function buildMajorBoardSourceReports(pool, jobs, startedAt) {
   return MAJOR_JOB_BOARD_SOURCES.map((source, index) => {
     const scraped = pool.filter((job) => job.source === source.name).length;
@@ -87,7 +217,7 @@ function buildMajorBoardSourceReports(pool, jobs, startedAt) {
   });
 }
 
-function selectMajorBoardJobs(candidates, input) {
+function selectRankedJobs(candidates, input) {
   const maxJobs = input.maxJobs || 25;
   const sorted = uniqueBy(candidates, resultDedupeKey).sort((a, b) => {
     const intentDelta =
@@ -95,7 +225,38 @@ function selectMajorBoardJobs(candidates, input) {
     if (intentDelta !== 0) return intentDelta;
     return (b.score || 0) - (a.score || 0) || compareJobsByFreshness(a, b);
   });
-  return sorted.slice(0, maxJobs);
+  const additionalSourceJobs = sorted.filter((job) => !MAJOR_BOARD_SOURCE_NAMES.has(job.source));
+  const additionalTarget = Math.min(additionalSourceJobs.length, Math.ceil(maxJobs * 0.3));
+  const reserved = sourceDiverseSlice(additionalSourceJobs, additionalTarget);
+  const selected = uniqueBy([...reserved, ...sorted], resultDedupeKey).slice(0, maxJobs);
+
+  return selected.sort((a, b) => {
+    const intentDelta =
+      Number(matchesQueryIntent(b, input)) - Number(matchesQueryIntent(a, input));
+    if (intentDelta !== 0) return intentDelta;
+    return (b.score || 0) - (a.score || 0) || compareJobsByFreshness(a, b);
+  });
+}
+
+function sourceDiverseSlice(jobs, limit) {
+  const bySource = new Map();
+  for (const job of jobs) {
+    const source = job.source || job.adapterName || "Other";
+    if (!bySource.has(source)) bySource.set(source, []);
+    bySource.get(source).push(job);
+  }
+
+  const picked = [];
+  while (picked.length < limit && bySource.size) {
+    for (const source of [...bySource.keys()]) {
+      const group = bySource.get(source);
+      const next = group.shift();
+      if (next) picked.push(next);
+      if (!group.length) bySource.delete(source);
+      if (picked.length >= limit) break;
+    }
+  }
+  return picked;
 }
 
 async function discoverVisibleMajorBoardJobs(input, sources) {
@@ -364,7 +525,11 @@ function normalizeTargetTitle(title = "") {
 }
 
 function resultDedupeKey(job) {
-  return `${job.company || ""}|${job.title || ""}|${job.location || ""}|${normalizeUrl(job.url || "")}`.toLowerCase();
+  const company = cleanText(job.company || "").toLowerCase();
+  const title = cleanText(job.title || "").toLowerCase();
+  const location = cleanText(job.location || "").toLowerCase();
+  if (company && title) return `${company}|${title}|${location}`;
+  return normalizeUrl(job.url || "").toLowerCase();
 }
 
 function clamp(value, min, max, fallback) {

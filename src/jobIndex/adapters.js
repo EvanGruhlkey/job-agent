@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { fetchPageWithFallback } from "./pageFetcher.js";
 import { searchPublicWeb } from "./searchPlanner.js";
+import { ADDITIONAL_LISTING_SOURCE_NAMES } from "./listingBoardSources.js";
 import {
   ATS_DEFINITIONS,
   GENERAL_JOB_BOARD_DOMAINS,
@@ -30,15 +31,35 @@ import {
 } from "./utils.js";
 
 export function jobIndexerSourceCatalogForClient() {
-  return MAJOR_JOB_BOARD_SOURCES.map((source, index) => ({
-    id: `channel-${index + 1}`,
-    name: `Listing channel ${index + 1}`,
+  const majorSources = MAJOR_JOB_BOARD_SOURCES.map((source, index) => ({
+    id: source.id,
+    name: source.name,
+    label: `Listing channel ${index + 1}`,
     mode: "public-browser-fetch",
     type: "major_job_board",
     sourcePageExamples: [],
     detailUrlPatterns: [],
     listingUrlPatterns: []
   }));
+  const adapterSources = ADDITIONAL_LISTING_SOURCE_NAMES.map((name, index) => ({
+    id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    name,
+    label: `Public source ${index + 1}`,
+    mode: "public-discovery-fetch",
+    type: sourceCatalogType(name),
+    sourcePageExamples: [],
+    detailUrlPatterns: [],
+    listingUrlPatterns: []
+  }));
+
+  return [...majorSources, ...adapterSources];
+}
+
+function sourceCatalogType(name) {
+  if (["Greenhouse", "Lever", "Ashby"].includes(name)) return "ats";
+  if (name === "GitHub hiring discovery") return "github";
+  if (name === "JobSpy-style general boards") return "job_board";
+  return "generic";
 }
 
 export function buildJobSourceAdapters() {

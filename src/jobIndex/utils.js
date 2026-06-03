@@ -199,6 +199,28 @@ export function blockedPageSignal(textOrHtml = "") {
   return /captcha|verify you are human|access denied|blocked|unusual traffic|forbidden|sign in to continue|login required/i.test(textOrHtml);
 }
 
+const JUNK_LISTING_TITLES = new Set([
+  "apply",
+  "view job",
+  "learn more",
+  "see more",
+  "read more",
+  "submit your resume",
+  "all jobs",
+  "remote jobs",
+  "search jobs"
+]);
+
+export function isUsableJobTitle(title = "") {
+  const cleaned = cleanText(title);
+  if (!cleaned || cleaned.length < 4 || cleaned.length > 160) return false;
+  const lower = cleaned.toLowerCase();
+  if (JUNK_LISTING_TITLES.has(lower)) return false;
+  if (/^(remote|categories|sign in|login|search|home)$/i.test(cleaned)) return false;
+  if (/^apply\b/i.test(cleaned) && cleaned.length < 24) return false;
+  return true;
+}
+
 export function jsShellSignal(html = "") {
   const text = cleanText(html);
   return text.length < 400 && /<script/i.test(html) && /root|__next|app|bundle|webpack|vite/i.test(html);

@@ -8,7 +8,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node src/jobIndex/matching.test.js",
-    "check": "node --check src/server.js && node --check src/resumeParser.js && node --check src/tailor.js && node --check src/llm.js && node --check src/jobIndex/sourceDefinitions.js && node --check src/jobIndex/utils.js && node --check src/jobIndex/pageFetcher.js && node --check src/jobIndex/searchPlanner.js && node --check src/jobIndex/database.js && node --check src/jobIndex/adapters.js && node --check src/jobIndex/indexer.js && node --check src/jobIndex/matching.test.js"
+    "check": "node --check src/server.js && node --check src/resumeParser.js && node --check src/tailor.js && node --check src/llm.js && node --check src/jobIndex/sourceDefinitions.js && node --check src/jobIndex/utils.js && node --check src/jobIndex/pageFetcher.js && node --check src/jobIndex/searchPlanner.js && node --check src/jobIndex/database.js && node --check src/jobIndex/adapters.js && node --check src/jobIndex/listingBoardSources.js && node --check src/jobIndex/indexer.js && node --check src/jobIndex/matching.test.js"
   },
   "dependencies": {
     "cheerio": "^1.0.0",

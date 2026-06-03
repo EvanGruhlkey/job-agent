@@ -11,8 +11,6 @@ let currentJobs = [];
 let selectedJob = null;
 let sortBy = "score";
 
-loadImportRunFromUrl();
-
 sortRecentBtn.addEventListener("click", () => {
   sortBy = sortBy === "recent" ? "score" : "recent";
   updateSortButton();
@@ -62,33 +60,6 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-async function loadImportRunFromUrl() {
-  const runId = new URLSearchParams(window.location.search).get("importRun");
-  if (!runId) return;
-
-  clearResults();
-  setBusy(true, "Loading imported jobs...");
-
-  try {
-    const response = await fetch(`/api/import/runs/${encodeURIComponent(runId)}`);
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Could not load imported jobs.");
-
-    currentJobs = payload.jobs || [];
-    sortBy = "score";
-    updateSortButton();
-    renderJobs(currentJobs);
-    if (currentJobs.length) {
-      selectJob(currentJobs[0].url);
-      setBusy(false, `Loaded ${currentJobs.length} imported jobs.`);
-    } else {
-      setBusy(false, "The import run did not include any jobs.", true);
-    }
-  } catch (error) {
-    setBusy(false, error.message, true);
-  }
-}
-
 function renderJobs(jobs) {
   jobCount.textContent = `${jobs.length} found`;
 
@@ -110,6 +81,7 @@ function renderJobs(jobs) {
             <span>${escapeHtml(formatPostedDate(job.datePosted))}</span>
           </div>
           <div class="job-meta">
+            <span class="badge source-badge">${escapeHtml(formatJobSource(job))}</span>
             <span class="badge">score ${job.score ?? 0}</span>
           </div>
         </button>
@@ -139,6 +111,9 @@ function selectJob(url) {
         <span>${escapeHtml(selectedJob.company)}</span>
         <span>${escapeHtml(selectedJob.location)}</span>
         <span>${escapeHtml(formatPostedDate(selectedJob.datePosted))}</span>
+      </div>
+      <div class="job-meta">
+        <span class="badge source-badge">Source: ${escapeHtml(formatJobSource(selectedJob))}</span>
       </div>
     </div>
     <div class="job-description">${escapeHtml(summary)}</div>
@@ -220,6 +195,17 @@ function formatPostedDate(value) {
     day: "numeric",
     year: "numeric"
   })}`;
+}
+
+function formatJobSource(job) {
+  const source = String(job?.source || job?.adapterName || job?.sourceType || "").trim();
+  if (!source) return "Unknown source";
+  return source
+    .replace(/\s+visible listings$/i, "")
+    .replace(/^JobSpy-style\s+/i, "")
+    .replace(/^Generic\s+/i, "")
+    .replace(/\s+discovery$/i, "")
+    .trim();
 }
 
 function escapeHtml(value) {

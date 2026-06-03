@@ -393,6 +393,11 @@ textarea:focus {
   font-weight: 750;
 }
 
+.source-badge {
+  background: #eef1f7;
+  color: var(--blue);
+}
+
 .full-width-action {
   justify-self: stretch;
   justify-content: center;

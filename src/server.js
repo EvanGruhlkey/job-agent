@@ -1,6 +1,4 @@
 import express from "express";
-import fs from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import multer from "multer";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,16 +7,6 @@ import { tailorResumeForJob } from "./tailor.js";
 import { getLlmStatus, tailorResumeWithLlm } from "./llm.js";
 import { loadIndexedJob, runJobDiscovery, searchIndexedJobs } from "./jobIndex/indexer.js";
 import { jobIndexerSourceCatalogForClient } from "./jobIndex/adapters.js";
-import { upsertJobs } from "./jobIndex/database.js";
-import { fetchPageWithFallback } from "./jobIndex/pageFetcher.js";
-import {
-  classifyJob,
-  enrichCompany,
-  extractCandidateLinksFromHtml,
-  extractPostedDate,
-  scoreJobForQuery,
-  sha1
-} from "./jobIndex/utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -146,111 +134,6 @@ app.post("/api/index/jobs/:id/tailor", upload.single("resumeFile"), async (req, 
   }
 });
 
-app.post("/api/major-board/snapshot", express.json({ limit: "1mb" }), async (req, res) => {
-  try {
-    const url = String(req.body.url || "").trim();
-    if (!/^https?:\/\//i.test(url)) {
-      return res.status(400).json({ error: "A valid LinkedIn or Indeed URL is required." });
-    }
-    if (!isLinkedInOrIndeedUrl(url)) {
-      return res.status(400).json({ error: "Only LinkedIn and Indeed snapshot URLs are supported here." });
-    }
-
-    const page = await fetchPageWithFallback(url, {
-      browserFallback: true,
-      minTextLength: 250,
-      timeoutMs: 15000,
-      attempts: 1
-    });
-    const snapshotPath = await saveMajorBoardHtmlSnapshot(page);
-    const links = extractCandidateLinksFromHtml(page.html || "", page.url || url)
-      .filter((link) => isLinkedInOrIndeedUrl(link.url))
-      .slice(0, 60);
-
-    res.json({
-      requestedUrl: url,
-      url: page.url || url,
-      status: page.status,
-      blocked: Boolean(page.blocked),
-      rendered: Boolean(page.rendered),
-      htmlLength: (page.html || "").length,
-      textLength: (page.text || "").length,
-      html: page.html || "",
-      snapshotPath,
-      screenshotPath: page.screenshotPath || "",
-      links,
-      errors: page.errors || []
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Could not capture the recent-search HTML.", detail: error.message });
-  }
-});
-
-app.post("/api/import/jobs", express.json({ limit: "4mb" }), async (req, res) => {
-  try {
-    const runId = randomUUID();
-    const targetTitle = String(req.body.targetTitle || "").trim();
-    const location = String(req.body.location || "").trim();
-    const resumeText = String(req.body.resumeText || "").trim();
-    const importedJobs = Array.isArray(req.body.jobs) ? req.body.jobs : [];
-
-    if (!importedJobs.length) {
-      return res.status(400).json({ error: "No jobs were provided to import." });
-    }
-
-    const jobs = importedJobs
-      .map((job) => normalizeImportedJob(job, { targetTitle, location }))
-      .filter((job) => job.title && job.url);
-
-    const savedJobs = await upsertJobs(jobs, {
-      runId,
-      sourceNames: ["Browser LinkedIn import"],
-      searchKey: `${targetTitle}|${location}`.toLowerCase()
-    });
-
-    const jobsWithTailoring = await mapWithConcurrency(savedJobs, 6, async (job) => {
-      if (!resumeText || resumeText.length < 80 || !targetTitle) return job;
-      const fallbackTailoring = tailorResumeForJob({ resumeText, targetTitle, job });
-      return {
-        ...job,
-        tailoring: await tailorResumeWithLlm({
-          resumeText,
-          targetTitle,
-          job,
-          fallbackTailoring
-        })
-      };
-    });
-
-    await saveImportRun(runId, {
-      runId,
-      targetTitle,
-      location,
-      resumeText,
-      jobs: jobsWithTailoring,
-      generatedAt: new Date().toISOString()
-    });
-
-    res.json({
-      runId,
-      imported: jobsWithTailoring.length,
-      jobs: jobsWithTailoring
-    });
-  } catch (error) {
-    res.status(500).json({ error: "Could not import scraped jobs.", detail: error.message });
-  }
-});
-
-app.get("/api/import/runs/:id", async (req, res) => {
-  try {
-    const run = await loadImportRun(req.params.id);
-    if (!run) return res.status(404).json({ error: "Import run not found." });
-    res.json(run);
-  } catch (error) {
-    res.status(500).json({ error: "Could not load import run.", detail: error.message });
-  }
-});
-
 app.post("/api/tailor", express.json({ limit: "4mb" }), async (req, res) => {
   try {
     const resumeText = String(req.body.resumeText || "").trim();
@@ -304,89 +187,4 @@ function normalizeSearchTitle(value = "") {
     .replace(/\bdevelopper\b/gi, "developer")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function isLinkedInOrIndeedUrl(url) {
-  try {
-    const hostname = new URL(url).hostname.replace(/^www\./, "");
-    return hostname === "linkedin.com" || hostname.endsWith(".linkedin.com") ||
-      hostname === "indeed.com" || hostname.endsWith(".indeed.com");
-  } catch {
-    return false;
-  }
-}
-
-async function saveMajorBoardHtmlSnapshot(page) {
-  const dir = path.join(__dirname, "..", "data", "major-board-html");
-  await fs.mkdir(dir, { recursive: true });
-  const host = new URL(page.url).hostname.replace(/[^a-z0-9.-]+/gi, "_");
-  const fileName = `${new Date().toISOString().replace(/[:.]/g, "-")}-${host}-${sha1(page.url).slice(0, 10)}.html`;
-  const filePath = path.join(dir, fileName);
-  await fs.writeFile(filePath, page.html || "", "utf8");
-  return filePath;
-}
-
-function normalizeImportedJob(job, { targetTitle, location }) {
-  const normalized = {
-    title: String(job.title || "").trim(),
-    company: String(job.company || "LinkedIn").trim(),
-    location: String(job.location || location || "See job description").trim(),
-    datePosted: String(job.datePosted || extractPostedDate(`${job.postedText || ""} ${job.description || ""}`) || "").trim(),
-    description: String(job.description || job.excerpt || "").trim(),
-    excerpt: String(job.excerpt || job.description || "").trim().slice(0, 700),
-    url: String(job.url || "").trim(),
-    source: String(job.source || "LinkedIn browser import").trim(),
-    adapterName: "Browser LinkedIn import",
-    sourceType: "browser-import",
-    rawText: String(job.rawText || job.description || job.excerpt || "").trim(),
-    easyApply: Boolean(job.easyApply),
-    browserImport: {
-      importedAt: new Date().toISOString(),
-      platformJobId: String(job.platformJobId || "")
-    },
-    blocked: false,
-    rendered: true,
-    screenshotPath: "",
-    extractionErrors: []
-  };
-  normalized.score = scoreJobForQuery(normalized, { targetTitle, location });
-  normalized.classification = classifyJob(normalized);
-  normalized.companyEnrichment = enrichCompany(normalized);
-  return normalized;
-}
-
-async function importRunPath(runId) {
-  const dir = path.join(__dirname, "..", "data", "import-runs");
-  await fs.mkdir(dir, { recursive: true });
-  return path.join(dir, `${runId}.json`);
-}
-
-async function saveImportRun(runId, payload) {
-  const filePath = await importRunPath(runId);
-  await fs.writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-}
-
-async function loadImportRun(runId) {
-  if (!/^[a-f0-9-]{20,}$/i.test(runId)) return null;
-  try {
-    return JSON.parse(await fs.readFile(await importRunPath(runId), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-async function mapWithConcurrency(items, concurrency, worker) {
-  const results = [];
-  let index = 0;
-
-  async function runNext() {
-    while (index < items.length) {
-      const current = index;
-      index += 1;
-      results[current] = await worker(items[current], current);
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, runNext));
-  return results;
 }
