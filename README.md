@@ -19,7 +19,7 @@ The UI lists matches with company, location, date, and source board. Select a ro
 
 ## Job board support
 
-When you press **Find jobs**, supported boards are searched from public pages only. Results are still filtered by the requested job title and location, so a supported board may return zero jobs for a specific search.
+When you press **Find jobs**, these are the sources used by the current default crawler. A check means the source is actively searched by direct listing-page crawling, public ATS endpoints, GitHub discovery, or domain-constrained public web discovery. An x means it is not used by the default **Find jobs** flow.
 
 | Job board / source | Supported |
 | --- | --- |
@@ -39,8 +39,8 @@ When you press **Find jobs**, supported boards are searched from public pages on
 | Nexxt | ✅ |
 | Jooble | ✅ |
 | Jora | ✅ |
-| Talent.com | ✅ |
-| Adzuna | ✅ |
+| Talent.com | ❌ |
+| Adzuna | ❌ |
 | We Work Remotely | ✅ |
 | Remote OK | ✅ |
 | Remotive | ✅ |
@@ -49,6 +49,12 @@ When you press **Find jobs**, supported boards are searched from public pages on
 | Himalayas | ✅ |
 | NoDesk | ✅ |
 | JustRemote | ✅ |
+| Dynamite Jobs | ✅ |
+| RemoteHub | ✅ |
+| SkipTheDrive | ✅ |
+| Virtual Vocations | ✅ |
+| Pangian | ✅ |
+| Crossover | ✅ |
 | Wellfound | ✅ |
 | Y Combinator Jobs | ✅ |
 | Built In | ✅ |
@@ -64,10 +70,14 @@ When you press **Find jobs**, supported boards are searched from public pages on
 | USAJOBS | ✅ |
 | GovernmentJobs | ✅ |
 | Idealist | ✅ |
-| HigherEdJobs | ✅ |
-| Mediabistro | ✅ |
-| Poached Jobs | ✅ |
-| Craigslist jobs | ✅ |
+| Work for Good | ❌ |
+| Health eCareers | ❌ |
+| HigherEdJobs | ❌ |
+| Lawjobs | ❌ |
+| Mediabistro | ❌ |
+| Poached Jobs | ❌ |
+| Snagajob | ❌ |
+| Craigslist jobs | ❌ |
 | Glassdoor | ❌ |
 | Handshake | ❌ |
 | Simplify.jobs | ❌ |
