@@ -22,6 +22,29 @@
   --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
 }
 
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --border: #3f3f46;
+  --input: #3f3f46;
+  --ring: #fafafa;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --destructive: #f87171;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.34);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -72,6 +95,67 @@ body.searching .app-shell {
 .app-container {
   width: min(1120px, 100%);
   margin: 0 auto;
+}
+
+.theme-toggle {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.theme-toggle:hover {
+  background: var(--accent);
+  transform: translateY(-1px);
+}
+
+.theme-icon {
+  grid-area: 1 / 1;
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease;
+}
+
+.moon-icon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
+}
+
+.sun-icon {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.7);
+}
+
+html[data-theme="dark"] .moon-icon {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.7);
+}
+
+html[data-theme="dark"] .sun-icon {
+  opacity: 1;
+  transform: rotate(0deg) scale(1);
 }
 
 body.landing .app-container {
@@ -226,7 +310,8 @@ textarea:focus {
 }
 
 .button-primary:hover:not(:disabled) {
-  background: #27272a;
+  background: var(--primary);
+  opacity: 0.88;
 }
 
 .button-secondary {
@@ -387,6 +472,10 @@ body.searching .status-strip {
 
 .job-card.active {
   box-shadow: 0 0 0 2px rgba(24, 24, 27, 0.1);
+}
+
+html[data-theme="dark"] .job-card.active {
+  box-shadow: 0 0 0 2px rgba(250, 250, 250, 0.18);
 }
 
 .job-card h3 {

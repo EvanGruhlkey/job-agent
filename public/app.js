@@ -7,10 +7,19 @@ const jobCount = document.querySelector("#jobCount");
 const jobDetail = document.querySelector("#jobDetail");
 const jobLink = document.querySelector("#jobLink");
 const sortRecentBtn = document.querySelector("#sortRecentBtn");
+const themeToggle = document.querySelector("#themeToggle");
 
 let currentJobs = [];
 let selectedJob = null;
 let sortBy = "score";
+
+initTheme();
+
+themeToggle.addEventListener("click", () => {
+  const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  localStorage.setItem("resumeJobAgentTheme", nextTheme);
+});
 
 sortRecentBtn.addEventListener("click", () => {
   sortBy = sortBy === "recent" ? "score" : "recent";
@@ -228,4 +237,19 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
+}
+
+function initTheme() {
+  const storedTheme = localStorage.getItem("resumeJobAgentTheme");
+  const preferredTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(storedTheme || preferredTheme);
+}
+
+function applyTheme(theme) {
+  const normalizedTheme = theme === "dark" ? "dark" : "light";
+  const nextLabel = normalizedTheme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  document.documentElement.dataset.theme = normalizedTheme;
+  themeToggle.setAttribute("aria-label", nextLabel);
+  themeToggle.setAttribute("aria-pressed", String(normalizedTheme === "dark"));
+  themeToggle.setAttribute("title", nextLabel);
 }
