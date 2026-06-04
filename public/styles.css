@@ -62,9 +62,26 @@ p {
   padding: 24px 16px 40px;
 }
 
+body.landing .app-shell,
+body.searching .app-shell {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
 .app-container {
   width: min(1120px, 100%);
   margin: 0 auto;
+}
+
+body.landing .app-container {
+  width: min(920px, 100%);
+}
+
+body.searching .app-container {
+  display: grid;
+  justify-items: center;
+  width: min(920px, 100%);
 }
 
 .app-header {
@@ -125,12 +142,13 @@ h3 {
 }
 
 .search-card {
-  padding: 16px;
+  width: 100%;
+  padding: 18px;
 }
 
 .search-form {
   display: grid;
-  grid-template-columns: minmax(220px, 1.25fr) minmax(180px, 1fr) minmax(96px, 0.4fr) auto;
+  grid-template-columns: minmax(220px, 1.25fr) minmax(180px, 1fr) minmax(90px, 0.35fr) auto;
   gap: 12px;
   align-items: end;
 }
@@ -244,10 +262,22 @@ textarea:focus {
 .status-strip {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  width: min(920px, 100%);
   min-height: 42px;
   color: var(--muted-foreground);
   font-size: 0.9rem;
+}
+
+body.landing .status-strip,
+body.landing .content-grid,
+body.searching .content-grid {
+  display: none;
+}
+
+body.searching .status-strip {
+  margin-top: 12px;
 }
 
 .status-dot {
@@ -275,9 +305,11 @@ textarea:focus {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 390px) minmax(0, 590px);
   gap: 18px;
   align-items: start;
+  justify-content: center;
+  width: min(1000px, 100%);
 }
 
 .jobs-column,

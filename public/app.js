@@ -20,6 +20,8 @@ sortRecentBtn.addEventListener("click", () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  document.body.classList.remove("landing");
+  document.body.classList.add("searching");
   clearResults();
 
   const requestedJobs = Number(form.maxJobs.value) || 25;
@@ -45,6 +47,7 @@ form.addEventListener("submit", async (event) => {
     sortBy = "score";
     updateSortButton();
     renderJobs(currentJobs);
+    document.body.classList.remove("searching");
 
     if (currentJobs.length) {
       selectJob(currentJobs[0].url);
@@ -85,7 +88,6 @@ function renderJobs(jobs) {
           </div>
           <div class="job-meta">
             <span class="badge source-badge">${escapeHtml(formatJobSource(job))}</span>
-            <span class="badge">score ${job.score ?? 0}</span>
           </div>
         </button>
       `
