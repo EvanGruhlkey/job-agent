@@ -1,20 +1,21 @@
 {
   "name": "resume-job-agent",
   "version": "1.0.0",
-  "description": "Local resume tailoring app that finds public job descriptions without job-board APIs.",
+  "description": "CLI job discovery and resume tailoring tool that saves jobs to local text reports.",
   "type": "module",
-  "main": "src/server.js",
+  "main": "src/cli.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
+    "start": "node src/cli.js",
+    "dev": "node --watch src/cli.js",
+    "search": "node src/cli.js search",
+    "list": "node src/cli.js list",
+    "tailor": "node src/cli.js tailor",
     "test": "node src/jobIndex/matching.test.js",
-    "check": "node --check src/server.js && node --check src/resumeParser.js && node --check src/tailor.js && node --check src/llm.js && node --check src/jobIndex/sourceDefinitions.js && node --check src/jobIndex/utils.js && node --check src/jobIndex/pageFetcher.js && node --check src/jobIndex/searchPlanner.js && node --check src/jobIndex/database.js && node --check src/jobIndex/adapters.js && node --check src/jobIndex/listingBoardSources.js && node --check src/jobIndex/indexer.js && node --check src/jobIndex/matching.test.js"
+    "check": "node --check src/cli.js && node --check src/resumeParser.js && node --check src/tailor.js && node --check src/llm.js && node --check src/jobIndex/sourceDefinitions.js && node --check src/jobIndex/utils.js && node --check src/jobIndex/pageFetcher.js && node --check src/jobIndex/searchPlanner.js && node --check src/jobIndex/database.js && node --check src/jobIndex/adapters.js && node --check src/jobIndex/listingBoardSources.js && node --check src/jobIndex/indexer.js && node --check src/jobIndex/matching.test.js"
   },
   "dependencies": {
     "cheerio": "^1.0.0",
-    "express": "^4.19.2",
     "mammoth": "^1.8.0",
-    "multer": "^2.0.2",
     "pdf-parse": "^1.1.1",
     "playwright": "^1.60.0"
   }
