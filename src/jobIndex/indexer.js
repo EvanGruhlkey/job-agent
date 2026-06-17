@@ -40,7 +40,7 @@ export async function runJobDiscovery(input) {
   const startedAt = Date.now();
   const runId = randomUUID();
   const targetTitle = normalizeTargetTitle(input.targetTitle);
-  const maxJobs = clamp(input.maxJobs, 1, 250, 25);
+  const maxJobs = clamp(input.maxJobs, 1, 500, 100);
   const discoveryInput = {
     ...input,
     targetTitle,
@@ -84,8 +84,8 @@ export async function runJobDiscovery(input) {
 
 async function discoverAdditionalListingJobs(input) {
   const maxJobs = Math.max(1, Number(input.maxJobs) || 25);
-  const maxLinksPerSource = Math.min(60, Math.max(12, maxJobs * 2));
-  const maxExtractPerSource = Math.min(18, Math.max(6, Math.ceil(maxJobs / 3)));
+  const maxLinksPerSource = Math.min(200, Math.max(24, maxJobs * 2));
+  const maxExtractPerSource = Math.min(80, Math.max(12, Math.ceil(maxJobs / 6)));
   const adapters = buildJobSourceAdapters().filter(isAdditionalListingSourceAdapter);
 
   const results = await promisePool(adapters, 2, async (adapter) => {
@@ -281,8 +281,8 @@ async function discoverVisibleMajorBoardJobs(input, sources) {
           attempts: 1,
           scrollToBottom: true,
           scrollRounds: source.id === "linkedin"
-            ? Math.min(12, 4 + Math.ceil(maxJobs / 25))
-            : Math.min(10, 3 + Math.ceil(maxJobs / 20)),
+            ? Math.min(24, 6 + Math.ceil(maxJobs / 20))
+            : Math.min(20, 5 + Math.ceil(maxJobs / 15)),
           scrollDelayMs: 700
         });
         if (page.blocked && !(page.html || "").length) {
@@ -316,8 +316,8 @@ function majorBoardSearchUrls(source, input) {
   const requested = Math.max(1, Number(input.maxJobs) || 25);
   const pageSize = source.id === "linkedin" ? 25 : 15;
   const maxPages = source.id === "linkedin"
-    ? Math.min(12, Math.max(3, Math.ceil(requested / pageSize) + 3))
-    : Math.min(16, Math.max(3, Math.ceil(requested / pageSize) + 3));
+    ? Math.min(40, Math.max(4, Math.ceil(requested / pageSize) + 4))
+    : Math.min(40, Math.max(4, Math.ceil(requested / pageSize) + 4));
   const urls = [];
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {

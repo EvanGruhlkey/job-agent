@@ -1,20 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractResumeInput } from "./resumeParser.js";
-import { tailorResumeForJob } from "./tailor.js";
-import { tailorResumeWithLlm } from "./llm.js";
-import { loadIndexedJob, runJobDiscovery, searchIndexedJobs } from "./jobIndex/indexer.js";
+import { runJobDiscovery, searchIndexedJobs } from "./jobIndex/indexer.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const DEFAULT_JOBS_OUTPUT = path.join("data", "jobs.md");
-const DEFAULT_TAILOR_OUTPUT = path.join("data", "tailored-resume.md");
+const DEFAULT_MAX_JOBS = 100;
+const MAX_JOBS_LIMIT = 500;
 const COMMAND_ALIASES = new Map([
   ["find", "search"],
   ["discover", "search"],
   ["jobs", "list"]
 ]);
-const KNOWN_COMMANDS = new Set(["search", "list", "tailor", "help", ...COMMAND_ALIASES.keys()]);
+const KNOWN_COMMANDS = new Set(["search", "list", "help", ...COMMAND_ALIASES.keys()]);
 
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
@@ -32,9 +30,6 @@ export async function main(argv = process.argv.slice(2)) {
     case "list":
       await runListCommand(args);
       return;
-    case "tailor":
-      await runTailorCommand(args);
-      return;
     default:
       printHelp();
   }
@@ -43,15 +38,19 @@ export async function main(argv = process.argv.slice(2)) {
 async function runSearchCommand(args) {
   const targetTitle = readSimpleSearchText(args);
   const location = String(readOption(args, ["location", "l"], "") || "").trim();
-  const maxJobs = readInteger(args, ["max", "count", "limit", "n"], { min: 1, max: 250, fallback: 25 });
+  const maxJobs = readInteger(args, ["max", "count", "limit", "n"], {
+    min: 1,
+    max: MAX_JOBS_LIMIT,
+    fallback: DEFAULT_MAX_JOBS
+  });
   const outputPath = resolveOutputPath(readOption(args, ["output", "o"], DEFAULT_JOBS_OUTPUT));
   const format = resolveOutputFormat(outputPath);
 
   if (!targetTitle) {
-    throw new Error('Search needs a title, for example: npm start -- search "Software Engineer"');
+    throw new Error('Search needs a job title, for example: npm start -- search "Software Engineer"');
   }
 
-  console.log(`Searching for ${targetTitle}${location ? ` in ${location}` : ""}...`);
+  console.log(`Searching for ${targetTitle}${location ? ` in ${location}` : ""} (up to ${maxJobs} jobs)...`);
   let discovery = await runJobDiscovery({
     targetTitle,
     location,
@@ -110,7 +109,11 @@ async function runSearchCommand(args) {
 async function runListCommand(args) {
   const query = readSimpleSearchText(args);
   const location = String(readOption(args, ["location", "l"], "") || "").trim();
-  const limit = readInteger(args, ["limit", "max", "count", "n"], { min: 1, max: 250, fallback: 50 });
+  const limit = readInteger(args, ["limit", "max", "count", "n"], {
+    min: 1,
+    max: MAX_JOBS_LIMIT,
+    fallback: DEFAULT_MAX_JOBS
+  });
   const outputPath = resolveOutputPath(readOption(args, ["output", "o"], DEFAULT_JOBS_OUTPUT));
   const format = resolveOutputFormat(outputPath);
 
@@ -129,48 +132,6 @@ async function runListCommand(args) {
   });
 
   console.log(`Saved ${jobs.length} indexed jobs to ${relativeToCwd(outputPath)}.`);
-}
-
-async function runTailorCommand(args) {
-  const positionals = remainingPositionals(args);
-  const jobId = readOption(args, ["job", "job-id", "id", "url"]) || positionals[0];
-  const resumePath = readOption(args, ["resume", "resume-file", "r"]) || positionals[1];
-  const targetTitle = normalizeSearchTitle(readOption(args, ["title", "t"], ""));
-  const outputPath = resolveOutputPath(readOption(args, ["output", "o"], DEFAULT_TAILOR_OUTPUT));
-
-  if (!jobId) throw new Error("Tailoring needs a job id or URL.");
-  if (!resumePath) throw new Error("Tailoring needs a resume file.");
-
-  const job = await loadIndexedJob(jobId);
-  if (!job) throw new Error(`Could not find an indexed job for ${jobId}. Run a search or list jobs first.`);
-
-  const resumeFile = await readResumeFile(resumePath);
-  const extractedResume = await extractResumeInput({ typedText: "", file: resumeFile });
-  if (!extractedResume.text || extractedResume.text.length < 80) {
-    throw new Error(`Could not read enough resume text from ${resumePath}.`);
-  }
-
-  const fallbackTailoring = tailorResumeForJob({
-    resumeText: extractedResume.text,
-    targetTitle: targetTitle || job.title,
-    job
-  });
-  const tailoring = await tailorResumeWithLlm({
-    resumeText: extractedResume.text,
-    targetTitle: targetTitle || job.title,
-    job,
-    fallbackTailoring
-  });
-
-  await writeTailoredResumeReport({
-    outputPath,
-    job,
-    tailoring,
-    resumeSource: extractedResume.source
-  });
-
-  console.log(`Saved tailored resume to ${relativeToCwd(outputPath)}.`);
-  console.log(`Tailoring method: ${tailoring.method}${tailoring.model ? ` (${tailoring.model})` : ""}.`);
 }
 
 async function writeJobsReport({ outputPath, format, jobs, metadata }) {
@@ -296,46 +257,6 @@ function formatJobsAsText(jobs, metadata) {
   return `${lines.join("\n").trim()}\n`;
 }
 
-async function writeTailoredResumeReport({ outputPath, job, tailoring, resumeSource }) {
-  const lines = [
-    "# Tailored Resume",
-    "",
-    `Generated: ${new Date().toISOString()}`,
-    `Resume source: ${resumeSource || "resume file"}`,
-    `Job: ${job.title || "Untitled role"} at ${job.company || "Unknown company"}`,
-  ];
-
-  if (job.url) lines.push(`Job URL: <${job.url}>`);
-
-  lines.push(
-    `Method: ${tailoring.method || "deterministic"}${tailoring.model ? ` (${tailoring.model})` : ""}`,
-    "",
-    tailoring.tailoredResumeMarkdown || "",
-    "",
-    "## Match Notes",
-    "",
-    `Matched skills: ${formatInlineList(tailoring.matchedSkills)}`,
-    `Transferable keywords: ${formatInlineList(tailoring.transferableKeywords)}`,
-    `Missing keywords to verify: ${formatInlineList(tailoring.missingKeywords)}`,
-    "",
-    "## Cautions",
-    "",
-    ...(tailoring.cautions || []).map((caution) => `- ${caution}`)
-  );
-
-  await writeTextFile(outputPath, `${lines.join("\n").trim()}\n`);
-}
-
-async function readResumeFile(resumePath) {
-  const absolutePath = path.resolve(process.cwd(), resumePath);
-  const buffer = await fs.readFile(absolutePath);
-  return {
-    originalname: path.basename(absolutePath),
-    mimetype: mimeTypeForPath(absolutePath),
-    buffer
-  };
-}
-
 async function writeTextFile(outputPath, content) {
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, content, "utf8");
@@ -343,21 +264,19 @@ async function writeTextFile(outputPath, content) {
 
 function printHelp() {
   console.log(`
-Resume Job Agent CLI
+Job Search Agent CLI
 
 Usage:
-  npm start -- search "Software Engineer" --location "Remote" --max 25
+  npm start -- search "Software Engineer" --location "Remote" --max 200
   npm start -- list "Software Engineer"
-  npm start -- tailor <job-id-or-url> ./resume.pdf
 
 Commands:
-  search    Discover jobs, update data/job-index.json, and save a jobs report.
-  list      Save matching jobs from the existing local index without searching the web.
-  tailor    Create a tailored resume Markdown file for an indexed job.
+  search    Discover jobs across major boards and public sources, update data/job-index.json, and save a report.
+  list      Save matching jobs from the existing local index without searching the web again.
 
 Options:
-  --location    Optional location for search or list.
-  --max         Number of jobs to save.
+  --location    Optional location filter.
+  --max         Number of jobs to find (default ${DEFAULT_MAX_JOBS}, max ${MAX_JOBS_LIMIT}).
   --output      Report path. Defaults to data/jobs.md.
 `.trim());
 }
@@ -409,8 +328,7 @@ function normalizeOptionKey(key) {
     q: "query",
     l: "location",
     n: "max",
-    o: "output",
-    r: "resume"
+    o: "output"
   };
   return aliases[key] || key.replace(/_/g, "-");
 }
@@ -494,21 +412,8 @@ function formatElapsed(ms) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatInlineList(values) {
-  return values?.length ? values.join(", ") : "none";
-}
-
 function relativeToCwd(filePath) {
   return path.relative(process.cwd(), filePath) || path.basename(filePath);
-}
-
-function mimeTypeForPath(filePath) {
-  const extension = path.extname(filePath).toLowerCase();
-  if (extension === ".pdf") return "application/pdf";
-  if (extension === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  if (extension === ".md") return "text/markdown";
-  if (extension === ".rtf") return "text/rtf";
-  return "text/plain";
 }
 
 if (process.argv[1] === __filename) {

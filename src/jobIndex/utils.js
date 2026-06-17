@@ -42,7 +42,7 @@ const DESCRIPTOR_TERM_ALIASES = new Map([
 
 export const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 ResumeJobAgent/2.0";
+  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 JobSearchAgent/2.0";
 
 export function sha1(value) {
   return crypto.createHash("sha1").update(String(value || "")).digest("hex");

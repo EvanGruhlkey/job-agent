@@ -789,7 +789,7 @@ async function fetchJson(url, timeoutMs = 6500) {
       signal: controller.signal,
       headers: {
         "accept": "application/json",
-        "user-agent": "ResumeJobAgent/2.0 public-job-indexer"
+        "user-agent": "JobSearchAgent/2.0 public-job-indexer"
       }
     });
     if (!response.ok) return null;
