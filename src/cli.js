@@ -1,18 +1,49 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runJobDiscovery, searchIndexedJobs } from "./jobIndex/indexer.js";
+import { loadJobDatabase } from "./jobIndex/database.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const DEFAULT_JOBS_OUTPUT = path.join("data", "jobs.md");
+const DEFAULT_FEED_OUTPUT = path.join("data", "job-feed.md");
 const DEFAULT_MAX_JOBS = 100;
 const MAX_JOBS_LIMIT = 500;
+const DEFAULT_FRESH_DAYS = 14;
 const COMMAND_ALIASES = new Map([
   ["find", "search"],
   ["discover", "search"],
+  ["fresh", "feed"],
+  ["radar", "feed"],
   ["jobs", "list"]
 ]);
-const KNOWN_COMMANDS = new Set(["search", "list", "help", ...COMMAND_ALIASES.keys()]);
+const KNOWN_COMMANDS = new Set(["search", "feed", "list", "categories", "help", ...COMMAND_ALIASES.keys()]);
+const CATEGORY_PRESETS = new Map([
+  ["software", "Software Engineer"],
+  ["swe", "Software Engineer"],
+  ["engineering", "Software Engineer"],
+  ["data", "Data Analyst"],
+  ["analytics", "Data Analyst"],
+  ["ai", "Machine Learning Engineer"],
+  ["ml", "Machine Learning Engineer"],
+  ["product", "Product Manager"],
+  ["design", "Product Designer"],
+  ["finance", "Financial Analyst"],
+  ["accounting", "Accountant"],
+  ["marketing", "Marketing Manager"],
+  ["sales", "Account Executive"],
+  ["cybersecurity", "Cybersecurity Analyst"],
+  ["security", "Cybersecurity Analyst"],
+  ["consulting", "Consultant"],
+  ["legal", "Paralegal"],
+  ["hr", "Human Resources Generalist"],
+  ["healthcare", "Registered Nurse"],
+  ["education", "Teacher"],
+  ["supply", "Supply Chain Analyst"],
+  ["operations", "Operations Manager"],
+  ["customer", "Customer Support Specialist"]
+]);
 
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
@@ -27,8 +58,14 @@ export async function main(argv = process.argv.slice(2)) {
     case "search":
       await runSearchCommand(args);
       return;
+    case "feed":
+      await runFeedCommand(args);
+      return;
     case "list":
       await runListCommand(args);
+      return;
+    case "categories":
+      printCategories();
       return;
     default:
       printHelp();
@@ -36,13 +73,22 @@ export async function main(argv = process.argv.slice(2)) {
 }
 
 async function runSearchCommand(args) {
-  const targetTitle = readSimpleSearchText(args);
+  const targetTitle = readTargetTitle(args);
   const location = String(readOption(args, ["location", "l"], "") || "").trim();
-  const maxJobs = readInteger(args, ["max", "count", "limit", "n"], {
+  const quickOpenCount = readOptionalInteger(args, ["how-many", "howmany", "how"]);
+  const maxJobs = quickOpenCount || readInteger(args, ["max", "count", "limit", "n"], {
     min: 1,
     max: MAX_JOBS_LIMIT,
     fallback: DEFAULT_MAX_JOBS
   });
+  const recentWindowDays = readInteger(args, ["fresh-days", "days", "recent"], {
+    min: 1,
+    max: 90,
+    fallback: DEFAULT_FRESH_DAYS
+  });
+  const searchAllSources = readFlag(args, ["all-sources", "all"]);
+  const shouldOpenJobs = Boolean(quickOpenCount) || readFlag(args, ["open"]);
+  const shouldWriteReport = !quickOpenCount && !readFlag(args, ["no-write", "no-report"]);
   const outputPath = resolveOutputPath(readOption(args, ["output", "o"], DEFAULT_JOBS_OUTPUT));
   const format = resolveOutputFormat(outputPath);
 
@@ -51,16 +97,22 @@ async function runSearchCommand(args) {
   }
 
   console.log(`Searching for ${targetTitle}${location ? ` in ${location}` : ""} (up to ${maxJobs} jobs)...`);
+  if (quickOpenCount) {
+    console.log("Quick-open mode: opening links when the first results are ready; no report will be written.");
+  }
   let discovery = await runJobDiscovery({
     targetTitle,
     location,
-    maxJobs
+    maxJobs,
+    recentWindowDays,
+    searchAllSources,
+    fastMode: Boolean(quickOpenCount)
   });
   let fallbackNote = "";
 
   if (!discovery.jobs.length && location) {
     console.log("No matches found with that location. Trying the same search without the location filter...");
-    discovery = await runJobDiscovery({ targetTitle, maxJobs });
+    discovery = await runJobDiscovery({ targetTitle, maxJobs, recentWindowDays, searchAllSources, fastMode: Boolean(quickOpenCount) });
     fallbackNote = `No matches were found for ${location}, so this report uses broader matches.`;
   }
 
@@ -85,29 +137,98 @@ async function runSearchCommand(args) {
     }
   }
 
-  await writeJobsReport({
-    outputPath,
-    format,
-    jobs: discovery.jobs,
-    metadata: {
-      mode: "Discovered Jobs",
-      targetTitle,
-      location,
-      requestedJobs: discovery.requestedJobs,
-      discovered: discovery.discovered,
-      runId: discovery.runId,
-      elapsedMs: discovery.elapsedMs,
-      sourceReports: discovery.sourceReports,
-      fallbackNote
-    }
-  });
+  if (shouldWriteReport) {
+    await writeJobsReport({
+      outputPath,
+      format,
+      jobs: discovery.jobs,
+      metadata: {
+        mode: "Discovered Jobs",
+        targetTitle,
+        location,
+        requestedJobs: discovery.requestedJobs,
+        discovered: discovery.discovered,
+        runId: discovery.runId,
+        elapsedMs: discovery.elapsedMs,
+        sourceReports: discovery.sourceReports,
+        fallbackNote,
+        recentWindowDays,
+        searchAllSources
+      }
+    });
+    console.log(`Saved ${discovery.jobs.length} jobs to ${relativeToCwd(outputPath)}.`);
+  }
 
-  console.log(`Saved ${discovery.jobs.length} jobs to ${relativeToCwd(outputPath)}.`);
+  if (shouldOpenJobs) {
+    const opened = await openJobLinks(discovery.jobs);
+    console.log(`Opened ${opened} job link${opened === 1 ? "" : "s"}.`);
+  }
+
   console.log("The structured index was also updated at data/job-index.json.");
 }
 
+async function runFeedCommand(args) {
+  const targetTitle = readTargetTitle(args);
+  const location = String(readOption(args, ["location", "l"], "United States") || "").trim();
+  const maxJobs = readInteger(args, ["max", "count", "limit", "n"], {
+    min: 1,
+    max: MAX_JOBS_LIMIT,
+    fallback: DEFAULT_MAX_JOBS
+  });
+  const recentWindowDays = readInteger(args, ["fresh-days", "days", "recent"], {
+    min: 1,
+    max: 90,
+    fallback: 7
+  });
+  const outputPath = resolveOutputPath(readOption(args, ["output", "o"], DEFAULT_FEED_OUTPUT));
+  const format = resolveOutputFormat(outputPath);
+  const fastMode = readFlag(args, ["fast"]);
+  const searchAllSources = !fastMode && readFlag(args, ["all-sources", "all"], true);
+
+  if (!targetTitle) {
+    throw new Error('Feed needs a role or category, for example: npm start -- feed --category software --location "Remote"');
+  }
+
+  const before = await loadJobDatabase();
+  const previousActiveIds = new Set((before.jobs || []).filter((job) => job.active).map((job) => job.id));
+
+  console.log(`Building fresh feed for ${targetTitle}${location ? ` in ${location}` : ""} (${recentWindowDays}-day window, up to ${maxJobs} jobs)...`);
+  const discovery = await runJobDiscovery({
+    targetTitle,
+    location,
+    maxJobs,
+    recentWindowDays,
+    searchAllSources,
+    fastMode
+  });
+  const after = await loadJobDatabase();
+  const feed = buildFreshFeed({
+    jobs: discovery.jobs,
+    database: after,
+    previousActiveIds,
+    recentWindowDays,
+    targetTitle,
+    location,
+    maxJobs,
+    sourceReports: discovery.sourceReports,
+    runId: discovery.runId,
+    elapsedMs: discovery.elapsedMs,
+    searchAllSources
+  });
+
+  await writeJobsReport({
+    outputPath,
+    format,
+    jobs: feed.jobs,
+    metadata: feed.metadata
+  });
+
+  console.log(`Saved ${feed.jobs.length} fresh jobs to ${relativeToCwd(outputPath)}.`);
+  console.log(`New active jobs since the prior index: ${feed.metadata.newSincePreviousIndex}. Active total: ${feed.metadata.activeTotal}.`);
+}
+
 async function runListCommand(args) {
-  const query = readSimpleSearchText(args);
+  const query = readTargetTitle(args);
   const location = String(readOption(args, ["location", "l"], "") || "").trim();
   const limit = readInteger(args, ["limit", "max", "count", "n"], {
     min: 1,
@@ -158,6 +279,12 @@ function formatJobsAsMarkdown(jobs, metadata) {
   if (Number.isFinite(metadata.elapsedMs)) lines.push(`Elapsed: ${formatElapsed(metadata.elapsedMs)}`);
   if (metadata.activeOnly !== undefined) lines.push(`Active only: ${metadata.activeOnly ? "yes" : "no"}`);
   if (metadata.fallbackNote) lines.push(`Note: ${metadata.fallbackNote}`);
+  if (Number.isFinite(metadata.recentWindowDays)) lines.push(`Freshness window: ${metadata.recentWindowDays} days`);
+  if (metadata.searchAllSources !== undefined) lines.push(`All-source discovery: ${metadata.searchAllSources ? "yes" : "no"}`);
+  if (Number.isFinite(metadata.newToday)) lines.push(`New openings today: ${metadata.newToday}`);
+  if (Number.isFinite(metadata.newSincePreviousIndex)) lines.push(`New since previous index: ${metadata.newSincePreviousIndex}`);
+  if (Number.isFinite(metadata.activeTotal)) lines.push(`Active openings in index: ${metadata.activeTotal}`);
+  if (metadata.lastUpdated) lines.push(`Last updated: ${metadata.lastUpdated}`);
 
   lines.push(
     "",
@@ -176,7 +303,11 @@ function formatJobsAsMarkdown(jobs, metadata) {
     lines.push(`- Company: ${cleanLine(job.company || "Unknown company")}`);
     lines.push(`- Location: ${cleanLine(job.location || "Unknown location")}`);
     lines.push(`- Posted: ${cleanLine(job.datePosted || job.postedText || "Unknown")}`);
+    if (job.firstSeen) lines.push(`- First seen: ${cleanLine(job.firstSeen).slice(0, 10)}`);
+    if (job.lastSeen) lines.push(`- Last verified: ${cleanLine(job.lastSeen).slice(0, 10)}`);
     lines.push(`- Source: ${cleanLine(job.source || job.adapterName || "Unknown source")}`);
+    if (job.freshnessLabel) lines.push(`- Freshness: ${job.freshnessLabel}`);
+    if (job.fitReason) lines.push(`- Why matched: ${cleanLine(job.fitReason)}`);
     if (Number.isFinite(job.score)) lines.push(`- Score: ${Math.round(job.score)}`);
     if (job.url) lines.push(`- URL: <${job.url}>`);
     const snippet = snippetForJob(job);
@@ -186,6 +317,16 @@ function formatJobsAsMarkdown(jobs, metadata) {
     }
     lines.push("");
   });
+
+  if (metadata.categorySummary?.length) {
+    lines.push("## Category Summary", "");
+    lines.push("| Category | Jobs |");
+    lines.push("| --- | ---: |");
+    for (const item of metadata.categorySummary) {
+      lines.push(`| ${escapeMarkdownCell(item.category)} | ${item.count} |`);
+    }
+    lines.push("");
+  }
 
   if (metadata.sourceReports?.length) {
     lines.push("## Source Report", "");
@@ -221,6 +362,12 @@ function formatJobsAsText(jobs, metadata) {
   if (Number.isFinite(metadata.elapsedMs)) lines.push(`Elapsed: ${formatElapsed(metadata.elapsedMs)}`);
   if (metadata.activeOnly !== undefined) lines.push(`Active only: ${metadata.activeOnly ? "yes" : "no"}`);
   if (metadata.fallbackNote) lines.push(`Note: ${metadata.fallbackNote}`);
+  if (Number.isFinite(metadata.recentWindowDays)) lines.push(`Freshness window: ${metadata.recentWindowDays} days`);
+  if (metadata.searchAllSources !== undefined) lines.push(`All-source discovery: ${metadata.searchAllSources ? "yes" : "no"}`);
+  if (Number.isFinite(metadata.newToday)) lines.push(`New openings today: ${metadata.newToday}`);
+  if (Number.isFinite(metadata.newSincePreviousIndex)) lines.push(`New since previous index: ${metadata.newSincePreviousIndex}`);
+  if (Number.isFinite(metadata.activeTotal)) lines.push(`Active openings in index: ${metadata.activeTotal}`);
+  if (metadata.lastUpdated) lines.push(`Last updated: ${metadata.lastUpdated}`);
 
   lines.push(
     "",
@@ -238,7 +385,11 @@ function formatJobsAsText(jobs, metadata) {
     lines.push(`   Company: ${cleanLine(job.company || "Unknown company")}`);
     lines.push(`   Location: ${cleanLine(job.location || "Unknown location")}`);
     lines.push(`   Posted: ${cleanLine(job.datePosted || job.postedText || "Unknown")}`);
+    if (job.firstSeen) lines.push(`   First seen: ${cleanLine(job.firstSeen).slice(0, 10)}`);
+    if (job.lastSeen) lines.push(`   Last verified: ${cleanLine(job.lastSeen).slice(0, 10)}`);
     lines.push(`   Source: ${cleanLine(job.source || job.adapterName || "Unknown source")}`);
+    if (job.freshnessLabel) lines.push(`   Freshness: ${job.freshnessLabel}`);
+    if (job.fitReason) lines.push(`   Why matched: ${cleanLine(job.fitReason)}`);
     if (Number.isFinite(job.score)) lines.push(`   Score: ${Math.round(job.score)}`);
     if (job.url) lines.push(`   URL: ${job.url}`);
     const snippet = snippetForJob(job);
@@ -250,6 +401,14 @@ function formatJobsAsText(jobs, metadata) {
     lines.push("SOURCE REPORT");
     for (const report of metadata.sourceReports) {
       lines.push(`- ${report.source || "Unknown"}: ${report.status || "unknown"}, discovered ${Number(report.discovered || 0)}, saved ${Number(report.extracted || 0)}`);
+    }
+    lines.push("");
+  }
+
+  if (metadata.categorySummary?.length) {
+    lines.push("CATEGORY SUMMARY");
+    for (const item of metadata.categorySummary) {
+      lines.push(`- ${item.category}: ${item.count}`);
     }
     lines.push("");
   }
@@ -267,18 +426,36 @@ function printHelp() {
 Job Search Agent CLI
 
 Usage:
+  npm start -- search "Software Engineer" --how-many 5
   npm start -- search "Software Engineer" --location "Remote" --max 200
+  npm start -- feed --category software --location "United States" --fresh-days 7 --max 200
   npm start -- list "Software Engineer"
+  npm start -- categories
 
 Commands:
-  search    Discover jobs across major boards and public sources, update data/job-index.json, and save a report.
+  search    Discover jobs. Use --how-many to open links, or --max to save a report.
+  feed      Intern List-style fresh feed: all-source discovery, freshness stats, source summary, and category counts.
   list      Save matching jobs from the existing local index without searching the web again.
+  categories Show role category shortcuts for feed/search.
 
 Options:
   --location    Optional location filter.
+  --how-many    Search for this many jobs, open each link, and skip writing a report.
+  --open        Open result links after searching.
+  --no-write    Skip writing data/jobs.md.
+  --category    Role shortcut, e.g. software, data, product, design, finance, marketing.
+  --fresh-days  Freshness window for live discovery. Defaults to ${DEFAULT_FRESH_DAYS} for search, 7 for feed.
+  --all-sources Search the broader source catalog. Feed enables this by default; use --fast to disable.
   --max         Number of jobs to find (default ${DEFAULT_MAX_JOBS}, max ${MAX_JOBS_LIMIT}).
   --output      Report path. Defaults to data/jobs.md.
 `.trim());
+}
+
+function printCategories() {
+  console.log("Role category shortcuts:");
+  for (const [key, title] of CATEGORY_PRESETS) {
+    console.log(`  ${key.padEnd(14)} ${title}`);
+  }
 }
 
 function parseArgs(argv) {
@@ -326,6 +503,7 @@ function normalizeOptionKey(key) {
     h: "help",
     t: "title",
     q: "query",
+    c: "category",
     l: "location",
     n: "max",
     o: "output"
@@ -363,8 +541,8 @@ function readSimpleSearchText(args) {
   return normalizeSearchTitle([optionText, positionalText].filter(Boolean).join(" "));
 }
 
-function readFlag(args, keys) {
-  const value = readOption(args, keys, false);
+function readFlag(args, keys, fallback = false) {
+  const value = readOption(args, keys, fallback);
   if (typeof value === "boolean") return value;
   return ["true", "1", "yes", "on"].includes(String(value).toLowerCase());
 }
@@ -373,6 +551,16 @@ function readInteger(args, keys, { min, max, fallback }) {
   const value = Number(readOption(args, keys, fallback));
   if (!Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function readOptionalInteger(args, keys) {
+  for (const key of keys) {
+    const value = readOption(args, [key], undefined);
+    if (value === undefined || value === true) continue;
+    const number = Number(value);
+    if (Number.isFinite(number)) return Math.min(MAX_JOBS_LIMIT, Math.max(1, Math.round(number)));
+  }
+  return 0;
 }
 
 function resolveOutputPath(output) {
@@ -395,6 +583,113 @@ function normalizeSearchTitle(value = "") {
     .trim();
 }
 
+function readTargetTitle(args) {
+  const category = String(readOption(args, ["category", "c"], "") || "").trim().toLowerCase();
+  const categoryTitle = CATEGORY_PRESETS.get(category) || "";
+  const explicitTitle = readSimpleSearchText(args);
+  return normalizeSearchTitle(explicitTitle || categoryTitle);
+}
+
+function buildFreshFeed({
+  jobs,
+  database,
+  previousActiveIds,
+  recentWindowDays,
+  targetTitle,
+  location,
+  maxJobs,
+  sourceReports,
+  runId,
+  elapsedMs,
+  searchAllSources
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const activeJobs = (database.jobs || []).filter((job) => job.active);
+  const matchingActive = activeJobs.filter((job) => !targetTitle || job.searchKeys?.some((key) => key.includes(targetTitle.toLowerCase())));
+  const freshJobs = jobs
+    .map((job) => ({
+      ...job,
+      freshnessLabel: freshnessLabel(job, today),
+      fitReason: fitReason(job, targetTitle, location)
+    }))
+    .sort((a, b) => freshnessRank(b) - freshnessRank(a) || (b.score || 0) - (a.score || 0))
+    .slice(0, maxJobs);
+
+  const newToday = activeJobs.filter((job) => String(job.firstSeen || "").startsWith(today)).length;
+  const newSincePreviousIndex = activeJobs.filter((job) => !previousActiveIds.has(job.id)).length;
+  const categorySummary = summarizeCategories(freshJobs);
+  const lastRun = (database.runs || []).at(-1);
+
+  return {
+    jobs: freshJobs,
+    metadata: {
+      mode: "Fresh Job Feed",
+      targetTitle,
+      location,
+      requestedJobs: maxJobs,
+      discovered: jobs.length,
+      runId,
+      elapsedMs,
+      sourceReports,
+      recentWindowDays,
+      searchAllSources,
+      newToday,
+      newSincePreviousIndex,
+      activeTotal: activeJobs.length,
+      matchingActiveTotal: matchingActive.length,
+      lastUpdated: lastRun?.at || "",
+      categorySummary
+    }
+  };
+}
+
+function freshnessLabel(job, today) {
+  const firstSeen = String(job.firstSeen || "").slice(0, 10);
+  const lastSeen = String(job.lastSeen || "").slice(0, 10);
+  const posted = String(job.datePosted || "").slice(0, 10);
+  if (firstSeen === today) return "new today";
+  if (posted === today) return "posted today";
+  if (lastSeen === today) return "verified today";
+  if (posted) return `posted ${posted}`;
+  return "freshness unknown";
+}
+
+function freshnessRank(job) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (String(job.firstSeen || "").startsWith(today)) return 5;
+  if (String(job.datePosted || "").startsWith(today)) return 4;
+  if (String(job.lastSeen || "").startsWith(today)) return 3;
+  if (job.datePosted) return 2;
+  return 1;
+}
+
+function fitReason(job, targetTitle, location) {
+  const reasons = [];
+  if (targetTitle && cleanLine(job.title).toLowerCase().includes(targetTitle.toLowerCase().split(/\s+/)[0])) {
+    reasons.push("title match");
+  }
+  if (location && cleanLine(`${job.location} ${job.description}`).toLowerCase().includes(location.toLowerCase().split(/\s+/)[0])) {
+    reasons.push("location match");
+  }
+  if (/greenhouse|lever|ashby|workday|smartrecruiters|workable/i.test(job.url || "")) {
+    reasons.push("direct ATS/company apply");
+  }
+  if (job.datePosted) reasons.push("has posted date");
+  return reasons.join(", ") || "ranked by source freshness and query relevance";
+}
+
+function summarizeCategories(jobs) {
+  const counts = new Map();
+  for (const job of jobs) {
+    for (const category of job.classification || ["general"]) {
+      counts.set(category, (counts.get(category) || 0) + 1);
+    }
+  }
+  return [...counts]
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category));
+}
+
 function snippetForJob(job) {
   return cleanLine(job.excerpt || job.description || job.rawText || "").slice(0, 700);
 }
@@ -414,6 +709,41 @@ function formatElapsed(ms) {
 
 function relativeToCwd(filePath) {
   return path.relative(process.cwd(), filePath) || path.basename(filePath);
+}
+
+async function openJobLinks(jobs) {
+  const urls = jobs.map((job) => job.url).filter(Boolean);
+  let opened = 0;
+  for (const url of urls) {
+    const ok = await openUrl(url);
+    if (ok) opened += 1;
+    else console.warn(`Could not open: ${url}`);
+  }
+  return opened;
+}
+
+function openUrl(url) {
+  const command = process.platform === "win32"
+    ? "powershell.exe"
+    : process.platform === "darwin"
+      ? "open"
+      : "xdg-open";
+  const args = process.platform === "win32"
+    ? ["-NoProfile", "-NonInteractive", "-Command", `Start-Process -FilePath '${escapePowerShellSingleQuoted(url)}'`]
+    : [url];
+
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: "ignore",
+      windowsHide: true
+    });
+    child.on("error", () => resolve(false));
+    child.on("exit", (code) => resolve(code === 0));
+  });
+}
+
+function escapePowerShellSingleQuoted(value) {
+  return String(value).replace(/'/g, "''");
 }
 
 if (process.argv[1] === __filename) {

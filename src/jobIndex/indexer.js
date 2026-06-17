@@ -33,6 +33,9 @@ const MAJOR_BOARD_SOURCE_NAMES = new Set(MAJOR_JOB_BOARD_SOURCES.map((source) =>
  * @property {string} targetTitle
  * @property {string=} location
  * @property {number=} maxJobs
+ * @property {number=} recentWindowDays
+ * @property {boolean=} searchAllSources
+ * @property {boolean=} fastMode
  * @property {{url:string,name?:string,type?:string}[]=} seeds
  */
 
@@ -45,6 +48,9 @@ export async function runJobDiscovery(input) {
     ...input,
     targetTitle,
     maxJobs,
+    recentWindowDays: clamp(input.recentWindowDays, 1, 90, 14),
+    searchAllSources: Boolean(input.searchAllSources),
+    fastMode: Boolean(input.fastMode),
     seeds: normalizeSeeds(input.seeds || [])
   };
 
@@ -84,9 +90,15 @@ export async function runJobDiscovery(input) {
 
 async function discoverAdditionalListingJobs(input) {
   const maxJobs = Math.max(1, Number(input.maxJobs) || 25);
-  const maxLinksPerSource = Math.min(200, Math.max(24, maxJobs * 2));
-  const maxExtractPerSource = Math.min(80, Math.max(12, Math.ceil(maxJobs / 6)));
-  const adapters = buildJobSourceAdapters().filter(isAdditionalListingSourceAdapter);
+  const maxLinksPerSource = input.fastMode
+    ? Math.min(30, Math.max(6, maxJobs * 2))
+    : Math.min(200, Math.max(24, maxJobs * 2));
+  const maxExtractPerSource = input.fastMode
+    ? Math.min(6, Math.max(2, Math.ceil(maxJobs / 2)))
+    : Math.min(80, Math.max(12, Math.ceil(maxJobs / 6)));
+  const adapters = buildJobSourceAdapters()
+    .filter(isAdditionalListingSourceAdapter)
+    .slice(0, input.fastMode ? 3 : undefined);
 
   const results = await promisePool(adapters, 2, async (adapter) => {
     const startedAt = Date.now();
@@ -277,13 +289,13 @@ async function discoverVisibleMajorBoardJobs(input, sources) {
           forceBrowser: true,
           browserFallback: true,
           minTextLength: 250,
-          timeoutMs: 22000,
+          timeoutMs: input.fastMode ? 7000 : 22000,
           attempts: 1,
           scrollToBottom: true,
           scrollRounds: source.id === "linkedin"
-            ? Math.min(24, 6 + Math.ceil(maxJobs / 20))
-            : Math.min(20, 5 + Math.ceil(maxJobs / 15)),
-          scrollDelayMs: 700
+            ? (input.fastMode ? 1 : Math.min(24, 6 + Math.ceil(maxJobs / 20)))
+            : (input.fastMode ? 1 : Math.min(20, 5 + Math.ceil(maxJobs / 15))),
+          scrollDelayMs: input.fastMode ? 250 : 700
         });
         if (page.blocked && !(page.html || "").length) {
           emptyStreak += 1;
@@ -316,8 +328,8 @@ function majorBoardSearchUrls(source, input) {
   const requested = Math.max(1, Number(input.maxJobs) || 25);
   const pageSize = source.id === "linkedin" ? 25 : 15;
   const maxPages = source.id === "linkedin"
-    ? Math.min(40, Math.max(4, Math.ceil(requested / pageSize) + 4))
-    : Math.min(40, Math.max(4, Math.ceil(requested / pageSize) + 4));
+    ? Math.min(input.fastMode ? 1 : 40, Math.max(input.fastMode ? 1 : 4, Math.ceil(requested / pageSize) + (input.fastMode ? 0 : 4)))
+    : Math.min(input.fastMode ? 1 : 40, Math.max(input.fastMode ? 1 : 4, Math.ceil(requested / pageSize) + (input.fastMode ? 0 : 4)));
   const urls = [];
 
   for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
@@ -325,10 +337,23 @@ function majorBoardSearchUrls(source, input) {
     const offset = pageIndex * pageSize;
     if (source.id === "linkedin") parsed.searchParams.set("start", String(offset));
     if (source.id === "indeed") parsed.searchParams.set("start", String(offset));
+    applyMajorBoardFreshnessFilter(parsed, source, input.recentWindowDays || 14);
     urls.push(parsed.toString());
   }
 
   return urls;
+}
+
+function applyMajorBoardFreshnessFilter(parsed, source, recentWindowDays) {
+  const days = Number(recentWindowDays) || 14;
+  if (source.id === "linkedin") {
+    const seconds = Math.max(86_400, Math.min(2_592_000, Math.round(days * 86_400)));
+    parsed.searchParams.set("f_TPR", `r${seconds}`);
+  }
+  if (source.id === "indeed") {
+    parsed.searchParams.set("fromage", String(Math.max(1, Math.min(30, Math.round(days)))));
+    parsed.searchParams.set("sort", "date");
+  }
 }
 
 async function saveMajorBoardListingHtml(page, source, input, jobs) {

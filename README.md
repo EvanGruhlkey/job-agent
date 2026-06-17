@@ -11,22 +11,44 @@ npm install
 ## Search
 
 ```bash
-npm start -- search "Software Engineer"
+npm start -- search "Software Engineer" --how-many 5
 ```
 
-Add a location or request more results:
+That searches for five jobs and opens each job link in your browser without writing a jobs report.
+
+Add a location:
+
+```bash
+npm start -- search "Software Engineer" --location "Remote" --how-many 10
+```
+
+If you want the old written report, use `--max` instead:
 
 ```bash
 npm start -- search "Software Engineer" --location "Remote" --max 200
 ```
 
-You can also omit `search`:
+Search updates `data/job-index.json`. When you use `--max`, it also writes a readable report to `data/jobs.md`; `--how-many` opens links instead.
+
+## Fresh Feed
+
+Use `feed` for an Intern List-style CLI feed: recent jobs, source stats, new-today counts, category counts, and freshness proof.
 
 ```bash
-npm start -- "Software Engineer"
+npm start -- feed --category software --location "United States" --fresh-days 7 --max 200
 ```
 
-Search updates `data/job-index.json` and writes a readable report to `data/jobs.md`. By default it finds up to 100 jobs; use `--max` to go up to 500.
+Feed searches the broad source catalog by default. For a quicker smoke run, use:
+
+```bash
+npm start -- feed --category software --location "Remote" --max 25 --fast
+```
+
+See supported role shortcuts:
+
+```bash
+npm start -- categories
+```
 
 ## List Saved Jobs
 
@@ -40,6 +62,13 @@ This reads from the local index instead of searching the web again.
 
 ```bash
 --location "Remote"
+--how-many 5
+--open
+--no-write
+--category software
+--fresh-days 7
+--all-sources
+--fast
 --max 200
 --output data/jobs.md
 ```
