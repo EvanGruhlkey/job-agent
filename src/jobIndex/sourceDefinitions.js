@@ -62,9 +62,9 @@ export const MAJOR_JOB_BOARD_SOURCES = [
     domains: ["linkedin.com"],
     reason:
       "Public search listing page.",
-    searchUrl: ({ targetTitle, location = "" }) => {
+    searchUrl: ({ targetTitle, location = "", preferRecent = false }) => {
       const params = new URLSearchParams({
-        keywords: targetTitle,
+        keywords: preferRecent ? linkedInFreshKeywords(targetTitle) : targetTitle,
         location: location || "United States"
       });
       return `https://www.linkedin.com/jobs/search/?${params.toString()}`;
@@ -206,6 +206,11 @@ export function renderTemplate(template, { targetTitle, location = "" }) {
 
 function ats(id, name, domains, detailPathPatterns, listingPathPatterns) {
   return { id, name, domains, detailPathPatterns, listingPathPatterns };
+}
+
+function linkedInFreshKeywords(targetTitle) {
+  const title = String(targetTitle || "").trim();
+  return title ? `${title} NOT reposted` : "NOT reposted";
 }
 
 function hostnameOf(url) {

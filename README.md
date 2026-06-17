@@ -14,7 +14,7 @@ npm install
 npm start -- search "Software Engineer" --how-many 5
 ```
 
-That searches for five jobs and opens each job link in your browser without writing a jobs report.
+That checks a deeper pool of posts, keeps the freshest five matches, and opens each job link in your browser without writing a jobs report.
 
 Add a location:
 

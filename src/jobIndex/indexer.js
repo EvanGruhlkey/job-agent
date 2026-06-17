@@ -36,6 +36,7 @@ const MAJOR_BOARD_SOURCE_NAMES = new Set(MAJOR_JOB_BOARD_SOURCES.map((source) =>
  * @property {number=} recentWindowDays
  * @property {boolean=} searchAllSources
  * @property {boolean=} fastMode
+ * @property {boolean=} preferRecent
  * @property {{url:string,name?:string,type?:string}[]=} seeds
  */
 
@@ -51,6 +52,7 @@ export async function runJobDiscovery(input) {
     recentWindowDays: clamp(input.recentWindowDays, 1, 90, 14),
     searchAllSources: Boolean(input.searchAllSources),
     fastMode: Boolean(input.fastMode),
+    preferRecent: Boolean(input.preferRecent),
     seeds: normalizeSeeds(input.seeds || [])
   };
 
@@ -180,6 +182,10 @@ function buildAdditionalSourceReports(reports, jobs) {
 
 function prioritizeDiscoveredLinks(links, input) {
   return [...links].sort((a, b) => {
+    if (input.preferRecent) {
+      const freshnessDelta = compareJobsByFreshness(linkAsJob(a), linkAsJob(b));
+      if (freshnessDelta !== 0) return freshnessDelta;
+    }
     const aScore = scoreJobForQuery(linkAsJob(a), input);
     const bScore = scoreJobForQuery(linkAsJob(b), input);
     return bScore - aScore;
@@ -235,6 +241,11 @@ function selectRankedJobs(candidates, input) {
     const intentDelta =
       Number(matchesQueryIntent(b, input)) - Number(matchesQueryIntent(a, input));
     if (intentDelta !== 0) return intentDelta;
+    if (input.preferRecent) {
+      const freshnessDelta = compareJobsByFreshness(a, b);
+      if (freshnessDelta !== 0) return freshnessDelta;
+      return (b.score || 0) - (a.score || 0);
+    }
     return (b.score || 0) - (a.score || 0) || compareJobsByFreshness(a, b);
   });
   const additionalSourceJobs = sorted.filter((job) => !MAJOR_BOARD_SOURCE_NAMES.has(job.source));
@@ -246,6 +257,11 @@ function selectRankedJobs(candidates, input) {
     const intentDelta =
       Number(matchesQueryIntent(b, input)) - Number(matchesQueryIntent(a, input));
     if (intentDelta !== 0) return intentDelta;
+    if (input.preferRecent) {
+      const freshnessDelta = compareJobsByFreshness(a, b);
+      if (freshnessDelta !== 0) return freshnessDelta;
+      return (b.score || 0) - (a.score || 0);
+    }
     return (b.score || 0) - (a.score || 0) || compareJobsByFreshness(a, b);
   });
 }
@@ -337,18 +353,21 @@ function majorBoardSearchUrls(source, input) {
     const offset = pageIndex * pageSize;
     if (source.id === "linkedin") parsed.searchParams.set("start", String(offset));
     if (source.id === "indeed") parsed.searchParams.set("start", String(offset));
-    applyMajorBoardFreshnessFilter(parsed, source, input.recentWindowDays || 14);
+    applyMajorBoardFreshnessFilter(parsed, source, input);
     urls.push(parsed.toString());
   }
 
   return urls;
 }
 
-function applyMajorBoardFreshnessFilter(parsed, source, recentWindowDays) {
-  const days = Number(recentWindowDays) || 14;
+function applyMajorBoardFreshnessFilter(parsed, source, input) {
+  const days = Number(input.recentWindowDays) || 14;
   if (source.id === "linkedin") {
-    const seconds = Math.max(86_400, Math.min(2_592_000, Math.round(days * 86_400)));
+    const seconds = input.preferRecent
+      ? 3600
+      : Math.max(86_400, Math.min(2_592_000, Math.round(days * 86_400)));
     parsed.searchParams.set("f_TPR", `r${seconds}`);
+    parsed.searchParams.set("sortBy", "DD");
   }
   if (source.id === "indeed") {
     parsed.searchParams.set("fromage", String(Math.max(1, Math.min(30, Math.round(days)))));
@@ -410,6 +429,7 @@ function extractLinkedInVisibleJobs(html, pageUrl, source, input) {
     const postedText = firstText(card, ["time", ".job-search-card__listdate", "[class*='listdate']"]);
     const datePosted = firstAttr(card, ["time"], "datetime") || extractPostedDate(postedText);
     const snippet = cleanText(card.text()).replace(/\s+/g, " ").slice(0, 700);
+    if (input.preferRecent && linkedInRepostSignal(`${postedText} ${snippet}`)) return;
 
     jobs.push(visibleBoardJobFromCard(source, {
       title,
@@ -423,6 +443,10 @@ function extractLinkedInVisibleJobs(html, pageUrl, source, input) {
   });
 
   return jobs.filter((job) => job.title && job.url);
+}
+
+function linkedInRepostSignal(text = "") {
+  return /\breposted\b/i.test(text);
 }
 
 function extractIndeedVisibleJobs(html, pageUrl, source, input) {

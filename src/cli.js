@@ -76,11 +76,12 @@ async function runSearchCommand(args) {
   const targetTitle = readTargetTitle(args);
   const location = String(readOption(args, ["location", "l"], "") || "").trim();
   const quickOpenCount = readOptionalInteger(args, ["how-many", "howmany", "how"]);
-  const maxJobs = quickOpenCount || readInteger(args, ["max", "count", "limit", "n"], {
+  const requestedJobs = readInteger(args, ["max", "count", "limit", "n"], {
     min: 1,
     max: MAX_JOBS_LIMIT,
     fallback: DEFAULT_MAX_JOBS
   });
+  const maxJobs = quickOpenCount ? deeperRecentSearchLimit(quickOpenCount) : requestedJobs;
   const recentWindowDays = readInteger(args, ["fresh-days", "days", "recent"], {
     min: 1,
     max: 90,
@@ -96,9 +97,10 @@ async function runSearchCommand(args) {
     throw new Error('Search needs a job title, for example: npm start -- search "Software Engineer"');
   }
 
-  console.log(`Searching for ${targetTitle}${location ? ` in ${location}` : ""} (up to ${maxJobs} jobs)...`);
+  const openNote = quickOpenCount ? `, opening freshest ${quickOpenCount}` : "";
+  console.log(`Searching for ${targetTitle}${location ? ` in ${location}` : ""} (checking up to ${maxJobs} jobs${openNote})...`);
   if (quickOpenCount) {
-    console.log("Quick-open mode: opening links when the first results are ready; no report will be written.");
+    console.log("Recent-open mode: collecting extra posts per site, ranking by newest first, and skipping the report.");
   }
   let discovery = await runJobDiscovery({
     targetTitle,
@@ -106,13 +108,13 @@ async function runSearchCommand(args) {
     maxJobs,
     recentWindowDays,
     searchAllSources,
-    fastMode: Boolean(quickOpenCount)
+    preferRecent: Boolean(quickOpenCount)
   });
   let fallbackNote = "";
 
   if (!discovery.jobs.length && location) {
     console.log("No matches found with that location. Trying the same search without the location filter...");
-    discovery = await runJobDiscovery({ targetTitle, maxJobs, recentWindowDays, searchAllSources, fastMode: Boolean(quickOpenCount) });
+    discovery = await runJobDiscovery({ targetTitle, maxJobs, recentWindowDays, searchAllSources, preferRecent: Boolean(quickOpenCount) });
     fallbackNote = `No matches were found for ${location}, so this report uses broader matches.`;
   }
 
@@ -160,7 +162,9 @@ async function runSearchCommand(args) {
   }
 
   if (shouldOpenJobs) {
-    const opened = await openJobLinks(discovery.jobs);
+    const jobsToOpen = quickOpenCount ? discovery.jobs.slice(0, quickOpenCount) : discovery.jobs;
+    printOpeningQueue(jobsToOpen);
+    const opened = await openJobLinks(jobsToOpen);
     console.log(`Opened ${opened} job link${opened === 1 ? "" : "s"}.`);
   }
 
@@ -440,7 +444,7 @@ Commands:
 
 Options:
   --location    Optional location filter.
-  --how-many    Search for this many jobs, open each link, and skip writing a report.
+  --how-many    Open this many freshest jobs after checking a deeper pool; skips the report.
   --open        Open result links after searching.
   --no-write    Skip writing data/jobs.md.
   --category    Role shortcut, e.g. software, data, product, design, finance, marketing.
@@ -561,6 +565,11 @@ function readOptionalInteger(args, keys) {
     if (Number.isFinite(number)) return Math.min(MAX_JOBS_LIMIT, Math.max(1, Math.round(number)));
   }
   return 0;
+}
+
+function deeperRecentSearchLimit(openCount) {
+  const count = Math.max(1, Number(openCount) || 1);
+  return Math.min(MAX_JOBS_LIMIT, Math.max(count * 8, count + 25, 40));
 }
 
 function resolveOutputPath(output) {
@@ -720,6 +729,15 @@ async function openJobLinks(jobs) {
     else console.warn(`Could not open: ${url}`);
   }
   return opened;
+}
+
+function printOpeningQueue(jobs) {
+  if (!jobs.length) return;
+  console.log("Opening newest matches:");
+  jobs.forEach((job, index) => {
+    const posted = job.datePosted || job.postedText || "unknown date";
+    console.log(`  ${index + 1}. ${cleanLine(job.title || "Untitled role")} - ${cleanLine(job.company || "Unknown company")} (${posted})`);
+  });
 }
 
 function openUrl(url) {
