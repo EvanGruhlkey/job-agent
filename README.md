@@ -1,6 +1,8 @@
 # Job Search Agent
 
-A local CLI that searches major job boards and public career pages, returning hundreds of listings and saving them to `data/jobs.md`.
+A local CLI that finds fresh, exact job matches and opens them in your browser.
+
+The main workflow is simple: type the role you want, choose how many links to open, and the app opens the freshest matching jobs it can find.
 
 ## Setup
 
@@ -8,69 +10,49 @@ A local CLI that searches major job boards and public career pages, returning hu
 npm install
 ```
 
-## Search
+## Open Fresh Job Links
 
 ```bash
-npm start -- search "Software Engineer" --how-many 5
+npm start -- search "Civil Engineer Intern" --how-many 20
 ```
 
-That checks a deeper pool of posts, keeps the freshest five matches, and opens each job link in your browser without writing a jobs report.
+This searches recent major-board results, keeps only jobs that match the full role intent, and opens the freshest matching links.
 
-Add a location:
+In `--how-many` mode, the app does not write reports, JSON indexes, screenshots, or snapshots.
+
+## Examples
 
 ```bash
-npm start -- search "Software Engineer" --location "Remote" --how-many 10
+npm start -- search "Software Engineer Intern" --how-many 10
+npm start -- search "Marketing Intern" --how-many 10
+npm start -- search "Finance Analyst Intern" --how-many 10
+npm start -- search "Registered Nurse" --location "Chicago, IL" --how-many 15
 ```
 
-If you want the old written report, use `--max` instead:
+If the first recent pass does not find enough exact matches, the app widens the freshness window and keeps searching. It opens fewer links rather than filling the queue with unrelated jobs.
+
+## Broader Search
+
+The default `--how-many` search is optimized for speed. Add `--all-sources` when you want a slower, broader crawl:
 
 ```bash
-npm start -- search "Software Engineer" --location "Remote" --max 200
+npm start -- search "Civil Engineer Intern" --how-many 20 --all-sources
 ```
 
-Search updates `data/job-index.json`. When you use `--max`, it also writes a readable report to `data/jobs.md`; `--how-many` opens links instead.
-
-## Fresh Feed
-
-Use `feed` for an Intern List-style CLI feed: recent jobs, source stats, new-today counts, category counts, and freshness proof.
+## Useful Options
 
 ```bash
-npm start -- feed --category software --location "United States" --fresh-days 7 --max 200
+--how-many 20          Open this many freshest exact matches
+--location "Remote"    Add a location
+--fresh-days 7         Set the freshness window
+--all-sources          Search broader sources, slower
 ```
 
-Feed searches the broad source catalog by default. For a quicker smoke run, use:
+## Validation
 
 ```bash
-npm start -- feed --category software --location "Remote" --max 25 --fast
+npm run check
+npm test
 ```
 
-See supported role shortcuts:
-
-```bash
-npm start -- categories
-```
-
-## List Saved Jobs
-
-```bash
-npm start -- list "Software Engineer"
-```
-
-This reads from the local index instead of searching the web again.
-
-## Options
-
-```bash
---location "Remote"
---how-many 5
---open
---no-write
---category software
---fresh-days 7
---all-sources
---fast
---max 200
---output data/jobs.md
-```
-
-The output format is inferred from the file name. Use `.md` for Markdown or `.txt` for plain text.
+`npm test` runs title-matching regression tests so searches like `Software Engineer Intern`, `Civil Engineer Intern`, `Marketing Intern`, and `Registered Nurse` stay precise.
