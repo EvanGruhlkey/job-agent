@@ -85,7 +85,7 @@ async function runSearchCommand(args) {
   const recentWindowDays = readInteger(args, ["fresh-days", "days", "recent"], {
     min: 1,
     max: 90,
-    fallback: DEFAULT_FRESH_DAYS
+    fallback: quickOpenCount ? 1 : DEFAULT_FRESH_DAYS
   });
   const searchAllSources = readFlag(args, ["all-sources", "all"]);
   const shouldOpenJobs = Boolean(quickOpenCount) || readFlag(args, ["open"]);
@@ -100,21 +100,43 @@ async function runSearchCommand(args) {
   const openNote = quickOpenCount ? `, opening freshest ${quickOpenCount}` : "";
   console.log(`Searching for ${targetTitle}${location ? ` in ${location}` : ""} (checking up to ${maxJobs} jobs${openNote})...`);
   if (quickOpenCount) {
-    console.log("Recent-open mode: collecting extra posts per site, ranking by newest first, and skipping the report.");
+    console.log("Recent-open mode: scanning recent major-board posts first; add --all-sources for the slower broad crawl.");
   }
-  let discovery = await runJobDiscovery({
+  const discoveryOptions = {
     targetTitle,
     location,
     maxJobs,
     recentWindowDays,
     searchAllSources,
+    fastMode: Boolean(quickOpenCount),
+    openLinksOnly: Boolean(quickOpenCount),
+    persist: shouldWriteReport,
     preferRecent: Boolean(quickOpenCount)
-  });
+  };
+  let discovery = await runJobDiscovery(discoveryOptions);
   let fallbackNote = "";
+
+  if (quickOpenCount && discovery.jobs.length < quickOpenCount && recentWindowDays < 7) {
+    console.log(`Only found ${discovery.jobs.length} exact matches in the last ${recentWindowDays} day${recentWindowDays === 1 ? "" : "s"}. Widening exact search to 7 days...`);
+    const widened = await runJobDiscovery({
+      ...discoveryOptions,
+      recentWindowDays: 7
+    });
+    discovery = mergeDiscoveries(discovery, widened, maxJobs);
+  }
 
   if (!discovery.jobs.length && location) {
     console.log("No matches found with that location. Trying the same search without the location filter...");
-    discovery = await runJobDiscovery({ targetTitle, maxJobs, recentWindowDays, searchAllSources, preferRecent: Boolean(quickOpenCount) });
+    discovery = await runJobDiscovery({
+      targetTitle,
+      maxJobs,
+      recentWindowDays,
+      searchAllSources,
+      fastMode: Boolean(quickOpenCount),
+      openLinksOnly: Boolean(quickOpenCount),
+      persist: shouldWriteReport,
+      preferRecent: Boolean(quickOpenCount)
+    });
     fallbackNote = `No matches were found for ${location}, so this report uses broader matches.`;
   }
 
@@ -168,7 +190,11 @@ async function runSearchCommand(args) {
     console.log(`Opened ${opened} job link${opened === 1 ? "" : "s"}.`);
   }
 
-  console.log("The structured index was also updated at data/job-index.json.");
+  if (shouldWriteReport) {
+    console.log("The structured index was also updated at data/job-index.json.");
+  } else {
+    console.log("No report or JSON index was written.");
+  }
 }
 
 async function runFeedCommand(args) {
@@ -448,7 +474,7 @@ Options:
   --open        Open result links after searching.
   --no-write    Skip writing data/jobs.md.
   --category    Role shortcut, e.g. software, data, product, design, finance, marketing.
-  --fresh-days  Freshness window for live discovery. Defaults to ${DEFAULT_FRESH_DAYS} for search, 7 for feed.
+  --fresh-days  Freshness window. Defaults to 1 day with --how-many, ${DEFAULT_FRESH_DAYS} for report search, 7 for feed.
   --all-sources Search the broader source catalog. Feed enables this by default; use --fast to disable.
   --max         Number of jobs to find (default ${DEFAULT_MAX_JOBS}, max ${MAX_JOBS_LIMIT}).
   --output      Report path. Defaults to data/jobs.md.
@@ -570,6 +596,26 @@ function readOptionalInteger(args, keys) {
 function deeperRecentSearchLimit(openCount) {
   const count = Math.max(1, Number(openCount) || 1);
   return Math.min(MAX_JOBS_LIMIT, Math.max(count * 8, count + 25, 40));
+}
+
+function mergeDiscoveries(first, second, limit) {
+  const jobs = [];
+  const seen = new Set();
+  for (const job of [...(first.jobs || []), ...(second.jobs || [])]) {
+    const key = `${cleanLine(job.company).toLowerCase()}|${cleanLine(job.title).toLowerCase()}|${cleanLine(job.location).toLowerCase()}` ||
+      String(job.url || "").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    jobs.push(job);
+    if (jobs.length >= limit) break;
+  }
+  return {
+    ...second,
+    jobs,
+    discovered: (first.discovered || 0) + (second.discovered || 0),
+    elapsedMs: (first.elapsedMs || 0) + (second.elapsedMs || 0),
+    sourceReports: [...(first.sourceReports || []), ...(second.sourceReports || [])]
+  };
 }
 
 function resolveOutputPath(output) {

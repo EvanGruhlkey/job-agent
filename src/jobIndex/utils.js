@@ -3,7 +3,7 @@ import * as cheerio from "cheerio";
 import { RESTRICTED_JOB_SOURCE_DOMAINS } from "./sourceDefinitions.js";
 
 const ROLE_TERM_ALIASES = new Map([
-  ["engineer", ["engineer", "developer"]],
+  ["engineer", ["engineer", "engineering", "developer"]],
   ["developer", ["developer", "engineer"]],
   ["manager", ["manager", "lead", "owner"]],
   ["designer", ["designer"]],
@@ -39,6 +39,7 @@ const DESCRIPTOR_TERM_ALIASES = new Map([
   ["internship", ["internship", "intern", "co-op", "coop"]],
   ["remote", ["remote", "distributed"]]
 ]);
+const STAGE_TERMS = new Set(["intern", "internship", "new", "grad"]);
 
 export const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
@@ -374,16 +375,17 @@ function normalizeComparableText(value) {
 }
 
 function hasCompactTitleMatch(title, terms) {
-  if (terms.length < 2) return true;
+  const compactTerms = terms.filter((term) => !STAGE_TERMS.has(term));
+  if (compactTerms.length < 2) return true;
   const tokens = normalizeComparableText(title).split(/\W+/).filter(Boolean);
-  const positions = terms.map((term) => conceptPositions(tokens, term));
+  const positions = compactTerms.map((term) => conceptPositions(tokens, term));
   if (positions.some((matches) => !matches.length)) return false;
 
   let compact = false;
   walkPositions(positions, 0, [], (picked) => {
     const min = Math.min(...picked);
     const max = Math.max(...picked);
-    if ((max - min + 1) <= terms.length) compact = true;
+    if ((max - min + 1) <= compactTerms.length) compact = true;
   });
   return compact;
 }

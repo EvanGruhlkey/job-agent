@@ -108,7 +108,7 @@ async function fetchRenderedPage(url, timeoutMs, options = {}) {
     const html = await page.content();
     const text = cleanText(await page.locator("body").innerText({ timeout: 3000 }).catch(() => html));
     const blocked = blockedPageSignal(text) || blockedPageSignal(html);
-    const screenshotPath = blocked || text.length < 350
+    const screenshotPath = options.captureScreenshots !== false && (blocked || text.length < 350)
       ? await captureCrawlerScreenshot(page, url, blocked ? "blocked" : "empty")
       : "";
 

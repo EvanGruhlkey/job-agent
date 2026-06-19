@@ -86,12 +86,12 @@ function createMajorBoardAdapter() {
       if (input.seeds?.length && !input.searchAllSources) return seeded.slice(0, input.maxLinks || 80);
 
       const queries = MAJOR_JOB_BOARD_SOURCES.flatMap((source) =>
-        source.queryTemplates.map((template) =>
+        recentQueryVariants(source.queryTemplates.map((template) =>
           renderTemplate(template, {
             targetTitle: input.targetTitle,
             location: input.location || "United States"
           })
-        )
+        ), input)
       );
       const searched = await discoverMajorFromQueries(queries, this, input);
       const searchPages = input.searchAllSources ? await discoverFromMajorSearchPages(input, this) : [];
@@ -136,10 +136,13 @@ function createAtsAdapter(definition) {
     async discoverJobs(input) {
       const seeded = await discoverFromSeeds(input, this, definition);
       if (input.seeds?.length && !input.searchAllSources) return seeded.slice(0, input.maxLinks || 80);
-      const queries = definition.domains.slice(0, 2).map((domain) =>
-        `"${input.targetTitle}" "${input.location || "United States"}" site:${domain}`
+      const queries = definition.domains.slice(0, 2).flatMap((domain) =>
+        recentQueryVariants([
+          `"${input.targetTitle}" "${input.location || "United States"}" site:${domain}`,
+          `"${input.targetTitle}" "${input.location || "United States"}" "posted" site:${domain}`
+        ], input)
       );
-      const searched = await discoverFromQueries(queries, this);
+      const searched = await discoverFromQueries(queries, this, input);
       return uniqueBy([...seeded, ...searched], (link) => link.url).slice(0, input.maxLinks || 80);
     },
     async discoverFromSeed(seed, input) {
@@ -273,10 +276,12 @@ function createGeneralBoardAdapter() {
         return discoverFromSeeds(input, this);
       }
       const domainsToSearch = input.searchAllSources ? domains : domains.slice(0, 10);
-      const queries = domainsToSearch.map((domain) =>
-        `"${input.targetTitle}" "${input.location || "United States"}" "posted" "apply" site:${domain}`
+      const queries = domainsToSearch.flatMap((domain) =>
+        recentQueryVariants([
+          `"${input.targetTitle}" "${input.location || "United States"}" "posted" "apply" site:${domain}`
+        ], input)
       );
-      return discoverFromQueries(queries, this);
+      return discoverFromQueries(queries, this, input);
     },
     async discoverFromSeed(seed, input) {
       return discoverFromSeeds({ ...input, seeds: [seed] }, this);
@@ -313,7 +318,7 @@ function createGitHubHiringAdapter() {
         seeds: GITHUB_DISCOVERY_URLS.map((url) => ({ url }))
       }, this);
       const githubTemplates = GITHUB_SEARCH_TEMPLATES.map((template) => renderTemplate(template, input));
-      const githubPages = await discoverFromQueries([...targeted, ...githubTemplates], this);
+      const githubPages = await discoverFromQueries(recentQueryVariants([...targeted, ...githubTemplates], input), this, input);
       const expanded = await promisePool(
         [...internalGitHubPages, ...githubPages].slice(0, input.searchAllSources ? 60 : 26),
         10,
@@ -374,7 +379,7 @@ function createGenericCompanyCareerAdapter() {
         `intitle:"${input.targetTitle}" "${input.location || "United States"}" "careers" "qualifications"`,
         `"${input.targetTitle}" "${input.location || "United States"}" "open positions" "apply"`
       ];
-      const searched = await discoverFromQueries(queries, this);
+      const searched = await discoverFromQueries(recentQueryVariants(queries, input), this, input);
       return uniqueBy([...seeded, ...searched], (link) => link.url);
     },
     async discoverFromSeed(seed, input) {
@@ -403,10 +408,12 @@ function createGenericNicheBoardAdapter() {
         return discoverFromSeeds(input, this);
       }
       const domainsToSearch = input.searchAllSources ? domains : domains.slice(0, 45);
-      const queries = domainsToSearch.map((domain) =>
-        `"${input.targetTitle}" "${input.location || "United States"}" "posted" site:${domain}`
+      const queries = domainsToSearch.flatMap((domain) =>
+        recentQueryVariants([
+          `"${input.targetTitle}" "${input.location || "United States"}" "posted" site:${domain}`
+        ], input)
       );
-      return discoverFromQueries(queries, this);
+      return discoverFromQueries(queries, this, input);
     },
     async discoverFromSeed(seed, input) {
       return discoverFromSeeds({ ...input, seeds: [seed] }, this);
@@ -445,9 +452,9 @@ async function discoverFromSeeds(input, adapter, atsDefinition = null) {
 }
 
 async function discoverFromQueries(queries, adapter, options = {}) {
-  const resultsByQuery = await promisePool(queries.slice(0, options.limit || 24), 8, async (query) => {
+  const resultsByQuery = await promisePool(queries.slice(0, options.limit || queryLimitForDiscovery(options)), 8, async (query) => {
     const links = [];
-    const results = await searchPublicWeb(query).catch(() => []);
+    const results = await searchPublicWeb(query, { recentWindowDays: options.recentWindowDays }).catch(() => []);
     for (const result of results) {
       if (isRestrictedJobSourceUrl(result.url)) continue;
       if (!adapter.canHandle(result.url) && adapter.type !== "generic" && adapter.type !== "company_career_page") continue;
@@ -455,6 +462,7 @@ async function discoverFromQueries(queries, adapter, options = {}) {
         url: normalizeUrl(result.url),
         title: result.title,
         snippet: result.snippet,
+        datePosted: extractPostedDate(`${result.title || ""} ${result.snippet || ""}`),
         source: adapter.name,
         sourceType: adapter.type,
         discoveredAt: new Date().toISOString()
@@ -462,7 +470,54 @@ async function discoverFromQueries(queries, adapter, options = {}) {
     }
     return links;
   });
-  return uniqueBy(resultsByQuery.flat(), (link) => link.url);
+  return sortDiscoveredLinks(uniqueBy(resultsByQuery.flat(), (link) => link.url), options);
+}
+
+function recentQueryVariants(queries, input = {}) {
+  if (!input.preferRecent) return queries;
+  const recentTerms = recentSearchTerms(input.recentWindowDays);
+  return uniqueBy(
+    queries.flatMap((query) => [
+      query,
+      ...recentTerms.map((term) => `${query} "${term}"`)
+    ]),
+    (query) => query
+  );
+}
+
+function recentSearchTerms(windowDays = 1) {
+  const days = Number(windowDays) || 1;
+  const terms = ["posted today", "just posted", "newly posted"];
+  if (days >= 2) terms.push("posted yesterday");
+  if (days >= 3) terms.push("past 3 days", "last 3 days");
+  if (days >= 7) terms.push("posted this week", "last 7 days");
+  return terms;
+}
+
+function queryLimitForDiscovery(options = {}) {
+  if (options.limit) return options.limit;
+  return options.preferRecent ? 48 : 24;
+}
+
+function sortDiscoveredLinks(links, options = {}) {
+  if (!options.preferRecent) return links;
+  return [...links].sort((a, b) => {
+    const aTime = new Date(a.datePosted || 0).getTime();
+    const bTime = new Date(b.datePosted || 0).getTime();
+    const safeATime = Number.isFinite(aTime) ? aTime : 0;
+    const safeBTime = Number.isFinite(bTime) ? bTime : 0;
+    if (safeATime !== safeBTime) return safeBTime - safeATime;
+    return recentTextScore(b) - recentTextScore(a);
+  });
+}
+
+function recentTextScore(link) {
+  const text = `${link.title || ""} ${link.snippet || ""}`.toLowerCase();
+  let score = 0;
+  if (/\bposted today\b|\btoday\b|\bjust posted\b|\bnewly posted\b/.test(text)) score += 6;
+  if (/\bposted yesterday\b|\byesterday\b/.test(text)) score += 3;
+  if (/\bpast 3 days\b|\blast 3 days\b/.test(text)) score += 2;
+  return score;
 }
 
 async function discoverMajorFromQueries(queries, adapter, input, options = {}) {

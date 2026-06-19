@@ -36,6 +36,8 @@ const MAJOR_BOARD_SOURCE_NAMES = new Set(MAJOR_JOB_BOARD_SOURCES.map((source) =>
  * @property {number=} recentWindowDays
  * @property {boolean=} searchAllSources
  * @property {boolean=} fastMode
+ * @property {boolean=} openLinksOnly
+ * @property {boolean=} persist
  * @property {boolean=} preferRecent
  * @property {{url:string,name?:string,type?:string}[]=} seeds
  */
@@ -52,12 +54,16 @@ export async function runJobDiscovery(input) {
     recentWindowDays: clamp(input.recentWindowDays, 1, 90, 14),
     searchAllSources: Boolean(input.searchAllSources),
     fastMode: Boolean(input.fastMode),
+    openLinksOnly: Boolean(input.openLinksOnly),
+    persist: input.persist !== false,
     preferRecent: Boolean(input.preferRecent),
     seeds: normalizeSeeds(input.seeds || [])
   };
 
   const listingPool = await discoverVisibleMajorBoardJobs(discoveryInput, MAJOR_JOB_BOARD_SOURCES);
-  const additionalDiscovery = await discoverAdditionalListingJobs(discoveryInput);
+  const additionalDiscovery = discoveryInput.openLinksOnly && !discoveryInput.searchAllSources
+    ? { jobs: [], reports: [] }
+    : await discoverAdditionalListingJobs(discoveryInput);
   const pool = uniqueBy([...listingPool, ...additionalDiscovery.jobs], resultDedupeKey);
   const jobs = selectRankedJobs(pool, discoveryInput);
   const sourceReports = [
@@ -68,15 +74,17 @@ export async function runJobDiscovery(input) {
     ...MAJOR_JOB_BOARD_SOURCES.map((source) => source.name),
     ...additionalDiscovery.reports.map((report) => report.source)
   ];
-  const savedJobs = await upsertJobs(jobs, {
-    runId,
-    sourceNames,
-    searchKey: `${targetTitle || ""}|${input.location || ""}`.toLowerCase()
-  });
+  const outputJobs = discoveryInput.persist
+    ? await upsertJobs(jobs, {
+        runId,
+        sourceNames,
+        searchKey: `${targetTitle || ""}|${input.location || ""}`.toLowerCase()
+      })
+    : jobs;
 
   return {
     runId,
-    jobs: savedJobs,
+    jobs: outputJobs,
     sourceReports,
     requestedJobs: maxJobs,
     discovered: pool.length,
@@ -118,6 +126,22 @@ async function discoverAdditionalListingJobs(input) {
         (link) => normalizeUrl(link.url)
       );
       const candidates = prioritizeDiscoveredLinks(links, input).slice(0, maxExtractPerSource);
+      if (input.openLinksOnly) {
+        const lightweightJobs = candidates
+          .map((link, index) => lightweightJobFromLink(link, adapter, input, index))
+          .filter((job) => usableAdditionalJob(job, input));
+
+        return {
+          source: adapter.name,
+          type: adapter.type,
+          discovered: links.length,
+          extracted: lightweightJobs.length,
+          failures,
+          elapsedMs: Date.now() - startedAt,
+          jobs: lightweightJobs
+        };
+      }
+
       const extracted = await promisePool(candidates, 4, async (link) => {
         try {
           const raw = await adapter.extractJob(link.url);
@@ -203,6 +227,36 @@ function linkAsJob(link) {
   };
 }
 
+function lightweightJobFromLink(link, adapter, input, index) {
+  const datePosted = link.datePosted || extractPostedDate(`${link.title || ""} ${link.snippet || ""}`);
+  const description = cleanText([
+    link.snippet || "",
+    link.sourceUrl ? `Discovered from ${link.sourceUrl}` : ""
+  ].filter(Boolean).join("\n\n"));
+  const job = {
+    title: cleanText(link.title || input.targetTitle || "Job listing").slice(0, 160),
+    company: adapter.name,
+    location: input.location || "See job description",
+    datePosted,
+    description,
+    excerpt: description.slice(0, 700),
+    url: normalizeUrl(link.url),
+    source: adapter.name,
+    adapterName: adapter.name,
+    sourceType: adapter.type,
+    rawText: description,
+    blocked: false,
+    rendered: false,
+    screenshotPath: "",
+    extractionErrors: [],
+    handoff: null
+  };
+  job.score = scoreJobForQuery(job, input) + Math.max(0, 10 - index);
+  job.classification = classifyJob(job);
+  job.companyEnrichment = enrichCompany(job);
+  return job;
+}
+
 function usableAdditionalJob(job, input) {
   if (!job?.url || !isUsableListingTitle(job.title) || job.blocked) return false;
   return matchesQueryIntent(job, input);
@@ -237,7 +291,11 @@ function buildMajorBoardSourceReports(pool, jobs, startedAt) {
 
 function selectRankedJobs(candidates, input) {
   const maxJobs = input.maxJobs || 25;
-  const sorted = uniqueBy(candidates, resultDedupeKey).sort((a, b) => {
+  const uniqueCandidates = uniqueBy(candidates, resultDedupeKey);
+  const candidatePool = input.openLinksOnly
+    ? uniqueCandidates.filter((job) => matchesQueryIntent(job, input))
+    : uniqueCandidates;
+  const sorted = candidatePool.sort((a, b) => {
     const intentDelta =
       Number(matchesQueryIntent(b, input)) - Number(matchesQueryIntent(a, input));
     if (intentDelta !== 0) return intentDelta;
@@ -302,11 +360,12 @@ async function discoverVisibleMajorBoardJobs(input, sources) {
 
       try {
         const page = await fetchPageWithFallback(searchUrl, {
-          forceBrowser: true,
+          forceBrowser: !input.fastMode,
           browserFallback: true,
           minTextLength: 250,
-          timeoutMs: input.fastMode ? 7000 : 22000,
+          timeoutMs: input.fastMode ? 4500 : 22000,
           attempts: 1,
+          captureScreenshots: input.persist,
           scrollToBottom: true,
           scrollRounds: source.id === "linkedin"
             ? (input.fastMode ? 1 : Math.min(24, 6 + Math.ceil(maxJobs / 20)))
@@ -322,7 +381,9 @@ async function discoverVisibleMajorBoardJobs(input, sources) {
         const visibleJobs = source.id === "linkedin"
           ? extractLinkedInVisibleJobs(page.html || "", page.url || searchUrl, source, input)
           : extractIndeedVisibleJobs(page.html || "", page.url || searchUrl, source, input);
-        const snapshotPath = await saveMajorBoardListingHtml(page, source, input, visibleJobs);
+        const snapshotPath = input.persist
+          ? await saveMajorBoardListingHtml(page, source, input, visibleJobs)
+          : "";
         for (const job of visibleJobs) {
           jobsByUrl.set(normalizeUrl(job.url), {
             ...job,
@@ -347,23 +408,128 @@ function majorBoardSearchUrls(source, input) {
     ? Math.min(input.fastMode ? 1 : 40, Math.max(input.fastMode ? 1 : 4, Math.ceil(requested / pageSize) + (input.fastMode ? 0 : 4)))
     : Math.min(input.fastMode ? 1 : 40, Math.max(input.fastMode ? 1 : 4, Math.ceil(requested / pageSize) + (input.fastMode ? 0 : 4)));
   const urls = [];
+  const titleVariants = majorBoardTitleVariants(input.targetTitle, input);
 
-  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-    const parsed = new URL(source.searchUrl(input));
-    const offset = pageIndex * pageSize;
-    if (source.id === "linkedin") parsed.searchParams.set("start", String(offset));
-    if (source.id === "indeed") parsed.searchParams.set("start", String(offset));
-    applyMajorBoardFreshnessFilter(parsed, source, input);
-    urls.push(parsed.toString());
+  for (const targetTitle of titleVariants) {
+    for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+      const parsed = new URL(source.searchUrl({ ...input, targetTitle }));
+      const offset = pageIndex * pageSize;
+      if (source.id === "linkedin") parsed.searchParams.set("start", String(offset));
+      if (source.id === "indeed") parsed.searchParams.set("start", String(offset));
+      applyMajorBoardFreshnessFilter(parsed, source, input);
+      urls.push(parsed.toString());
+    }
   }
 
-  return urls;
+  return uniqueBy(urls, (url) => url);
+}
+
+function majorBoardTitleVariants(targetTitle, input) {
+  const title = normalizeTargetTitle(targetTitle);
+  if (!input.openLinksOnly) return [title];
+  const variants = [title];
+  const stage = stageIntentForTitle(title);
+
+  if (stage) {
+    const baseTitle = titleWithoutStage(title);
+    if (baseTitle) {
+      variants.push(...stageTitleVariants(baseTitle, stage));
+      variants.push(...engineeringTitleVariants(baseTitle).flatMap((variant) =>
+        stageTitleVariants(variant, stage)
+      ));
+    }
+  }
+
+  return uniqueBy(variants, (variant) => variant.toLowerCase());
+}
+
+function stageIntentForTitle(title) {
+  const lower = String(title || "").toLowerCase();
+  if (/\bco-?op\b|\bcoop\b/.test(lower)) return "co-op";
+  if (/\binternship\b/.test(lower)) return "internship";
+  if (/\bintern\b/.test(lower)) return "intern";
+  if (/\bnew\s+grad\b|\bnew\s+graduate\b|\bentry\s+level\b/.test(lower)) return "new-grad";
+  return "";
+}
+
+function titleWithoutStage(title) {
+  return cleanText(String(title || "")
+    .replace(/\bnew\s+graduate\b/gi, "")
+    .replace(/\bnew\s+grad\b/gi, "")
+    .replace(/\bentry\s+level\b/gi, "")
+    .replace(/\binternship\b/gi, "")
+    .replace(/\bintern\b/gi, "")
+    .replace(/\bco-?op\b/gi, "")
+    .replace(/\bcoop\b/gi, "")
+    .replace(/\s+[-–—]\s+$/g, "")
+    .replace(/^[-–—]\s+/g, ""));
+}
+
+function stageTitleVariants(baseTitle, stage) {
+  const base = titleCase(baseTitle);
+  if (!base) return [];
+  if (stage === "co-op") {
+    return [
+      `${base} Co-op`,
+      `${base} Co-op Student`,
+      `Co-op ${base}`,
+      `${base} Intern`,
+      `${base} Internship`
+    ];
+  }
+  if (stage === "internship") {
+    return [
+      `${base} Internship`,
+      `${base} Intern`,
+      `Internship ${base}`,
+      `Intern - ${base}`
+    ];
+  }
+  if (stage === "intern") {
+    return [
+      `${base} Intern`,
+      `${base} Internship`,
+      `Intern - ${base}`,
+      `Intern ${base}`,
+      `${base} Co-op`
+    ];
+  }
+  if (stage === "new-grad") {
+    return [
+      `${base} New Grad`,
+      `${base} New Graduate`,
+      `New Grad ${base}`,
+      `Entry Level ${base}`,
+      `${base} Entry Level`
+    ];
+  }
+  return [base];
+}
+
+function engineeringTitleVariants(baseTitle) {
+  const base = titleCase(baseTitle);
+  const variants = [];
+  const engineerMatch = base.match(/^(.+?)\s+Engineer$/i);
+  if (engineerMatch) variants.push(`${engineerMatch[1]} Engineering`);
+  const engineeringMatch = base.match(/^(.+?)\s+Engineering$/i);
+  if (engineeringMatch) variants.push(`${engineeringMatch[1]} Engineer`);
+  return variants;
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.length <= 3 && word === word.toUpperCase()
+      ? word
+      : `${word.slice(0, 1).toUpperCase()}${word.slice(1).toLowerCase()}`)
+    .join(" ");
 }
 
 function applyMajorBoardFreshnessFilter(parsed, source, input) {
   const days = Number(input.recentWindowDays) || 14;
   if (source.id === "linkedin") {
-    const seconds = input.preferRecent
+    const seconds = input.preferRecent && days <= 1
       ? 3600
       : Math.max(86_400, Math.min(2_592_000, Math.round(days * 86_400)));
     parsed.searchParams.set("f_TPR", `r${seconds}`);
