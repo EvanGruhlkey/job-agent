@@ -1,7 +1,6 @@
 # Job Search Agent
 
-Job Search Agent is a local CLI for opening fresh, exact job matches without digging through noisy job-board results. Give it a role, tell it how many links you want, and it searches recent listings, filters out partial matches, and opens the best matches in your browser.
-
+Job Search Agent is a local CLI agent that finds jobs within seconds and populates them right into your browser. 
 ## Install
 
 ```bash
@@ -14,9 +13,9 @@ npm install
 npm start -- search "Civil Engineer Intern" --how-many 20
 ```
 
-The app searches recent major-board listings first. It keeps only jobs that match the full role intent, ranks them by freshness, prints the opening queue, and opens the links in your default browser.
+The app searches recent major-board listings first. It keeps only jobs that match the full role intent, ranks them by job posting date, prints the opening queue, and opens the links in your default browser.
 
-If the first recent pass does not find enough exact matches, the app widens the freshness window and tries again. It opens fewer links rather than padding the queue with unrelated jobs.
+If the first recent pass does not find enough exact matches, the app widens the job posting window and tries again.
 
 ## Examples
 
@@ -46,20 +45,3 @@ The matcher favors exact role intent. For example, `Civil Engineer Intern` can m
 
 When changing matching or ranking behavior, add regression cases to `src/jobIndex/matching.test.js`. The app should prefer opening fewer exact jobs over opening more unrelated jobs.
 
-## Development
-
-From the repository root:
-
-```bash
-npm install
-npm start -- search "Software Engineer Intern" --how-many 5
-```
-
-On Windows PowerShell:
-
-```powershell
-npm install
-npm start -- search "Software Engineer Intern" --how-many 5
-```
-
-Generated runtime files should stay under ignored directories such as `data/`.
