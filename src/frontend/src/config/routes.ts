@@ -11,7 +11,7 @@ export const PRIMARY_NAV_ITEMS = [
   },
   {
     path: ROUTES.CURATED_COMPANIES,
-    label: 'Curated Companies',
+    label: 'Companies',
     icon: 'Business',
   },
 ] as const;

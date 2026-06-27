@@ -18,7 +18,7 @@ export function CuratedCompaniesPage() {
     <Container maxWidth="xl" sx={{ py: RESPONSIVE.spacing.pageMarginY }}>
       <Box sx={{ mb: RESPONSIVE.spacing.sectionMarginB }}>
         <Typography variant="h4" component="h1">
-          Curated Companies
+          Companies
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 1, maxWidth: 720 }}>
           Every company this site tracks, hand-picked into one place. Search to see what each company
