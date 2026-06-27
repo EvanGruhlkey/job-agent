@@ -104,3 +104,5 @@ iphone-*.png
 *.tmp
 *.temp
 *.bak
+
+.vercel

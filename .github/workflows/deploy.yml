@@ -1,0 +1,42 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master, main]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  vercel:
+    name: Vercel (frontend + API proxies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@50
+
+      - name: Pull Vercel Environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: team_S9rOk0tnDbhFpQcXEQ0KXGNJ
+          VERCEL_PROJECT_ID: prj_Vyy00PBZ1hElVBc9V3MaPyRCpl2U
+
+      - name: Build
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: team_S9rOk0tnDbhFpQcXEQ0KXGNJ
+          VERCEL_PROJECT_ID: prj_Vyy00PBZ1hElVBc9V3MaPyRCpl2U
+
+      - name: Deploy
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          VERCEL_ORG_ID: team_S9rOk0tnDbhFpQcXEQ0KXGNJ
+          VERCEL_PROJECT_ID: prj_Vyy00PBZ1hElVBc9V3MaPyRCpl2U

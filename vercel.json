@@ -5,6 +5,7 @@
   "outputDirectory": "src/frontend/dist",
   "git": {
     "deploymentEnabled": {
+      "master": true,
       "main": true,
       "**": false
     }
