@@ -24,7 +24,10 @@ export function TimeWindowSelect({
     <label className="grid gap-1.5">
       <span className="px-1 text-xs font-medium text-muted-foreground">{label}</span>
       <Select value={value} onValueChange={(next) => onChange(next as TimeWindow)}>
-        <SelectTrigger className="h-11 w-full min-w-36 rounded-xl bg-card">
+        <SelectTrigger
+          className="min-h-11 w-full min-w-36 rounded-xl bg-card px-2 py-1.5"
+          style={{ height: 46 }}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>

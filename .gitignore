@@ -2,6 +2,7 @@
 node_modules/
 .pnp
 .pnp.js
+.pnpm-store/
 
 # Testing
 coverage/
@@ -15,18 +16,21 @@ loc-e2e-*.png
 # Production
 dist/
 build/
+out/
 
 # Environment variables
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+!.env.sample
+!.env.*.example
+!.env.*.sample
 
 # Local MCP server config (may contain credentials)
 .mcp.json
 
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -39,10 +43,14 @@ lerna-debug.log*
 .idea/
 *.suo
 *.sw?
+*.swp
+*.swo
+*~
 .DS_Store
 
 # Vite
 .vite/
+*.tsbuildinfo
 
 # OS
 Thumbs.db
@@ -51,6 +59,10 @@ Thumbs.db
 # Data files
 /data/
 *.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite3-*
 scripts/output/
 .pgdata/
 .local-logs/
@@ -59,7 +71,15 @@ scripts/output/
 __pycache__/
 *.pyc
 .venv/
-.env*.local
+venv/
+env/
+ENV/
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Local learning scratchpads (not part of PRs)
 docs/learning/
@@ -76,6 +96,11 @@ iphone-*.png
 .lavish/
 .analysis/
 
-.gitignore
+# Local agent/editor state
 .agents/
 .claude/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
