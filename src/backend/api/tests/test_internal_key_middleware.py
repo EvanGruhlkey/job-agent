@@ -131,6 +131,12 @@ class TestKeyUnset:
             "INTERNAL_API_KEY is unset" in record.message for record in caplog.records
         ), f"expected unset warning; got {[r.message for r in caplog.records]}"
 
+    def test_warn_if_unset_fails_on_hosted_backend_without_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "internal_api_key", None)
+        monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+        with pytest.raises(RuntimeError, match="INTERNAL_API_KEY is unset"):
+            warn_if_unset()
+
     def test_warn_if_unset_is_silent_when_key_is_set(self, caplog, monkeypatch):
         monkeypatch.setattr(settings, "internal_api_key", "set-value")
         with caplog.at_level(logging.WARNING, logger="api.auth.internal_key"):
