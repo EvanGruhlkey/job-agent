@@ -1,0 +1,321 @@
+import type {
+  Job,
+  JobLocation,
+  TimeWindow,
+  SearchTag,
+  GraphFilters,
+  ListFilters,
+  RecentJobsFilters,
+} from '../../../types';
+import { getTimeWindowDuration } from '../../../lib/date.ts';
+import { US_STATE_NAME_TO_CODE, stripUsSuffix } from '../../../lib/location.ts';
+
+/**
+ * Shared utility functions for job filtering logic.
+ * These pure functions can be used by both graph and list selectors.
+ */
+
+/**
+ * Check if a job is within a specific time window
+ */
+export function isJobWithinTimeWindow(jobCreatedAt: string, timeWindow: TimeWindow): boolean {
+  if (timeWindow === 'all') {
+    return true;
+  }
+
+  const now = new Date();
+  const jobDate = new Date(jobCreatedAt);
+  const durationMs = getTimeWindowDuration(timeWindow);
+  const cutoffTime = now.getTime() - durationMs;
+
+  return jobDate.getTime() >= cutoffTime;
+}
+
+/**
+ * Check if a job matches search tags (include/exclude logic)
+ */
+export function matchesSearchTags(job: Job, searchTags: SearchTag[] | undefined): boolean {
+  if (!searchTags || searchTags.length === 0) {
+    return true;
+  }
+
+  const searchableText = [job.title, job.department, job.team, job.location, ...(job.tags || [])]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  const includeTags = searchTags.filter((t) => t.mode === 'include');
+  const excludeTags = searchTags.filter((t) => t.mode === 'exclude');
+
+  // Include logic: If include tags exist, job must match at least one (OR logic)
+  if (includeTags.length > 0) {
+    const matchesAnyIncludeTag = includeTags.some((tag) =>
+      searchableText.includes(tag.text.toLowerCase())
+    );
+
+    if (!matchesAnyIncludeTag) {
+      return false;
+    }
+  }
+
+  // Exclude logic: Job must NOT match any exclude tags (AND NOT logic)
+  if (excludeTags.length > 0) {
+    const matchesAnyExcludeTag = excludeTags.some((tag) =>
+      searchableText.includes(tag.text.toLowerCase())
+    );
+
+    if (matchesAnyExcludeTag) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/** Hierarchy tier of a (possibly synthesized) location option. */
+type LocationTier = 'country' | 'region' | 'city' | 'remote';
+
+/** Structured descriptor a selected location option resolves to. */
+export interface LocationDescriptor {
+  tier: LocationTier;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  remoteScope: string | null;
+}
+
+/** Lookup of every location tag present on the jobs being filtered. */
+export interface LocationIndex {
+  /** canonicalName -> descriptor, for every real tag on the jobs. */
+  descriptors: Map<string, LocationDescriptor>;
+}
+
+/** Trim + upper-case a code; empty becomes null so comparisons stay strict. */
+const normCode = (value: string | null | undefined): string | null =>
+  value == null ? null : value.trim().toUpperCase() || null;
+
+/** Hard-coded descriptor for the "United States" meta-option. */
+const UNITED_STATES_DESCRIPTOR: LocationDescriptor = {
+  tier: 'country',
+  city: null,
+  region: null,
+  country: 'US',
+  remoteScope: null,
+};
+
+/** Map a raw JobLocation tag to a normalized descriptor. */
+function tagToDescriptor(tag: JobLocation): LocationDescriptor {
+  const tier: LocationTier =
+    tag.kind === 'country' || tag.kind === 'region' || tag.kind === 'remote' ? tag.kind : 'city';
+  return {
+    tier,
+    city: tag.city ? tag.city.trim() : null,
+    region: normCode(tag.region),
+    country: normCode(tag.country),
+    remoteScope: normCode(tag.remoteScope),
+  };
+}
+
+/**
+ * Build a lookup of every location tag present on `jobs`, keyed by canonicalName,
+ * so the matcher can resolve a selected filter string back to its structured
+ * tier and do hierarchical (region→city, country→everything) containment.
+ */
+export function buildLocationIndex(jobs: Job[]): LocationIndex {
+  const descriptors = new Map<string, LocationDescriptor>();
+  for (const job of jobs) {
+    if (!job.locations) continue;
+    for (const tag of job.locations) {
+      if (!descriptors.has(tag.canonicalName)) {
+        descriptors.set(tag.canonicalName, tagToDescriptor(tag));
+      }
+    }
+  }
+  return { descriptors };
+}
+
+/**
+ * Resolve a selected filter string to a structured descriptor:
+ *  1. "United States" meta-option -> US country descriptor.
+ *  2. A real tag's canonicalName -> its descriptor (from the index).
+ *  3. A synthesized "<State>, US" option (no exact tag) -> derived US region
+ *     descriptor via the state-name lookup.
+ * Returns null when unresolvable, so that token matches nothing.
+ */
+export function resolveSelectedDescriptor(
+  filterLoc: string,
+  index: LocationIndex
+): LocationDescriptor | null {
+  if (filterLoc === 'United States') {
+    return UNITED_STATES_DESCRIPTOR;
+  }
+
+  const known = index.descriptors.get(filterLoc);
+  if (known) {
+    return known;
+  }
+
+  const stateCode = US_STATE_NAME_TO_CODE[stripUsSuffix(filterLoc)];
+  if (stateCode) {
+    return { tier: 'region', city: null, region: stateCode, country: 'US', remoteScope: null };
+  }
+  return null;
+}
+
+/**
+ * Check if a job matches the location filter (multi-select with OR logic) using
+ * HIERARCHICAL containment rather than exact canonicalName equality:
+ *
+ *  - country filter -> any non-remote tag with the same country
+ *  - region filter  -> any non-remote tag with the same region AND country
+ *                      (the country guard prevents cross-country region clashes,
+ *                       e.g. Ontario "ON"/CA vs a US region)
+ *  - city filter    -> any tag with the same city + region + country
+ *  - remote filter  -> any remote tag with the same remoteScope
+ *
+ * Remote tags are matched only by an explicit remote selection — geographic
+ * filters return on-site/hybrid roles, and "Remote (US)" stays its own option.
+ *
+ * Matches against the job's normalized canonical tags (`job.locations`); a job
+ * with no tags (unnormalized or failed) matches no specific filter — there is
+ * intentionally no raw-string fallback. The `index` is built once per filter
+ * pass from the jobs being filtered (see `buildLocationIndex`).
+ */
+export function matchesLocation(
+  job: Job,
+  locations: string[] | undefined,
+  index: LocationIndex
+): boolean {
+  if (!locations || locations.length === 0) {
+    return true;
+  }
+
+  const tags = job.locations;
+  if (!tags || tags.length === 0) {
+    return false;
+  }
+
+  return locations.some((filterLoc) => {
+    // Baseline: an exact canonical match always counts. Preserves matching for
+    // tags that carry only a canonicalName (no structured city/region fields).
+    if (tags.some((tag) => tag.canonicalName === filterLoc)) {
+      return true;
+    }
+
+    // Hierarchical containment via structured fields for parent selections.
+    const want = resolveSelectedDescriptor(filterLoc, index);
+    if (!want) {
+      return false;
+    }
+
+    return tags.some((rawTag) => {
+      const tag = tagToDescriptor(rawTag);
+      switch (want.tier) {
+        case 'country':
+          return tag.tier !== 'remote' && tag.country != null && tag.country === want.country;
+        case 'region':
+          return (
+            tag.tier !== 'remote' &&
+            tag.region != null &&
+            tag.region === want.region &&
+            tag.country === want.country
+          );
+        case 'city':
+          return (
+            tag.city != null &&
+            want.city != null &&
+            tag.city.toUpperCase() === want.city.toUpperCase() &&
+            tag.region === want.region &&
+            tag.country === want.country
+          );
+        case 'remote':
+          if (tag.tier !== 'remote') return false;
+          return want.remoteScope == null || tag.remoteScope === want.remoteScope;
+        default:
+          return false;
+      }
+    });
+  });
+}
+
+/**
+ * Check if a job matches department filter (multi-select with OR logic)
+ */
+export function matchesDepartment(job: Job, departments: string[] | undefined): boolean {
+  if (!departments || departments.length === 0) {
+    return true;
+  }
+
+  return departments.some((filterDept) => job.department === filterDept);
+}
+
+/**
+ * Check if a job matches employment type filter
+ */
+export function matchesEmploymentType(job: Job, employmentType: string | undefined): boolean {
+  if (!employmentType) {
+    return true;
+  }
+
+  return job.employmentType === employmentType;
+}
+
+/**
+ * Check if a job matches company filter (multi-select with OR logic)
+ */
+export function matchesCompany(job: Job, companies: string[] | undefined): boolean {
+  if (!companies || companies.length === 0) {
+    return true;
+  }
+
+  return companies.some((filterCompany) => job.company === filterCompany);
+}
+
+/**
+ * Filter jobs based on provided filters
+ * Works with GraphFilters, ListFilters, and RecentJobsFilters
+ */
+export function filterJobsByFilters(
+  jobs: Job[],
+  filters: GraphFilters | ListFilters | RecentJobsFilters
+): Job[] {
+  // Build the hierarchical location index ONCE from the full candidate set so a
+  // region/country selection resolves against every available tag.
+  const locationIndex = buildLocationIndex(jobs);
+
+  return jobs.filter((job: Job) => {
+    // Time window filter
+    if (!isJobWithinTimeWindow(job.createdAt, filters.timeWindow)) {
+      return false;
+    }
+
+    // Search tags filter (include/exclude logic)
+    if (!matchesSearchTags(job, filters.searchTags)) {
+      return false;
+    }
+
+    // Location filter (multi-select with OR logic, hierarchical containment)
+    if (!matchesLocation(job, filters.location, locationIndex)) {
+      return false;
+    }
+
+    // Department filter (multi-select with OR logic)
+    // Only check if department exists on filters (GraphFilters/ListFilters only)
+    if ('department' in filters && !matchesDepartment(job, filters.department)) {
+      return false;
+    }
+
+    // Employment type filter
+    if (!matchesEmploymentType(job, filters.employmentType)) {
+      return false;
+    }
+
+    // Company filter (multi-select with OR logic)
+    // Only check if company exists on filters (RecentJobsFilters only)
+    if ('company' in filters && !matchesCompany(job, filters.company)) {
+      return false;
+    }
+
+    return true;
+  });
+}

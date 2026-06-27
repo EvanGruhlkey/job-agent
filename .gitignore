@@ -1,7 +1,81 @@
+# Dependencies
 node_modules/
-.agent-browser-profile/
-.DS_Store
-*.log
+.pnp
+.pnp.js
+
+# Testing
+coverage/
+.nyc_output
+
+# Playwright / browser-automation artifacts (MCP snapshots, traces, e2e screenshots)
+.playwright/
+.playwright-mcp/
+loc-e2e-*.png
+
+# Production
 dist/
+build/
+
+# Environment variables
 .env
-data/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Local MCP server config (may contain credentials)
+.mcp.json
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Editor directories and files
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.suo
+*.sw?
+.DS_Store
+
+# Vite
+.vite/
+
+# OS
+Thumbs.db
+.vercel
+
+# Data files
+/data/
+*.db
+scripts/output/
+.pgdata/
+.local-logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env*.local
+
+# Local learning scratchpads (not part of PRs)
+docs/learning/
+
+# Location-eval run outputs (transient; the committed reference is eval-baseline.json)
+src/backend/api/eval/results/
+
+# e2e / verification screenshots (parallel to loc-e2e-*.png above)
+collapse-*.png
+curated-*.png
+iphone-*.png
+
+# lavish-axi editor + ad-hoc analysis artifacts (local, not committed)
+.lavish/
+.analysis/
+
+.gitignore
+.agents/
+.claude/

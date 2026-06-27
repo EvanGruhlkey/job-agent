@@ -1,0 +1,121 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build -w src/frontend",
+  "installCommand": "npm install",
+  "outputDirectory": "src/frontend/dist",
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "**": false
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/ingest/static/:path(.*)",
+      "destination": "https://us-assets.i.posthog.com/static/:path"
+    },
+    {
+      "source": "/ingest/array/:path(.*)",
+      "destination": "https://us-assets.i.posthog.com/array/:path"
+    },
+    {
+      "source": "/ingest/:path(.*)",
+      "destination": "https://us.i.posthog.com/:path"
+    },
+    {
+      "source": "/api/jobs-qa",
+      "destination": "/api/jobs-qa"
+    },
+    {
+      "source": "/api/jobs-qa/:path(.*)",
+      "destination": "/api/jobs-qa?path=:path"
+    },
+    {
+      "source": "/api/users",
+      "destination": "/api/users"
+    },
+    {
+      "source": "/api/users/:path(.*)",
+      "destination": "/api/users?path=:path"
+    },
+    {
+      "source": "/api/features",
+      "destination": "/api/features"
+    },
+    {
+      "source": "/api/features/:path(.*)",
+      "destination": "/api/features?path=:path"
+    },
+    {
+      "source": "/api/feedback",
+      "destination": "/api/feedback"
+    },
+    {
+      "source": "/api/feedback/:path(.*)",
+      "destination": "/api/feedback?path=:path"
+    },
+    {
+      "source": "/api/admin",
+      "destination": "/api/admin"
+    },
+    {
+      "source": "/api/admin/:path(.*)",
+      "destination": "/api/admin?path=:path"
+    },
+    {
+      "source": "/recent-jobs",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/qa",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/why",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/companies",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/curated-companies",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/account",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/saved-filters",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/vote-features",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/admin/:path(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://Careerbase.vercel.app"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type, Authorization"
+        }
+      ]
+    }
+  ]
+}

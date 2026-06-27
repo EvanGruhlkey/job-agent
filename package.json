@@ -1,19 +1,14 @@
 {
-  "name": "job-search-agent",
+  "name": "careerbase-monorepo",
   "version": "1.0.0",
-  "description": "CLI job discovery tool that searches major boards and public sources for hundreds of listings.",
-  "type": "module",
-  "main": "src/cli.js",
+  "private": true,
+  "workspaces": ["src/frontend"],
   "scripts": {
-    "start": "node src/cli.js",
-    "dev": "node --watch src/cli.js",
-    "search": "node src/cli.js search",
-    "list": "node src/cli.js list",
-    "test": "node src/jobIndex/matching.test.js",
-    "check": "node --check src/cli.js && node --check src/jobIndex/sourceDefinitions.js && node --check src/jobIndex/utils.js && node --check src/jobIndex/pageFetcher.js && node --check src/jobIndex/searchPlanner.js && node --check src/jobIndex/database.js && node --check src/jobIndex/adapters.js && node --check src/jobIndex/listingBoardSources.js && node --check src/jobIndex/indexer.js && node --check src/jobIndex/matching.test.js"
-  },
-  "dependencies": {
-    "cheerio": "^1.0.0",
-    "playwright": "^1.60.0"
+    "dev": "npm run dev -w src/frontend",
+    "build": "npm run build -w src/frontend",
+    "test": "npm run test -w src/frontend",
+    "type-check": "npm run type-check -w src/frontend",
+    "lint": "npm run lint -w src/frontend",
+    "format": "npm run format -w src/frontend"
   }
 }

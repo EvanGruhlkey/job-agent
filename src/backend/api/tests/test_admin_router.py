@@ -1,0 +1,1121 @@
+"""Integration tests for the admin router and the require_admin gate."""
+
+from fastapi.testclient import TestClient
+from psycopg2 import sql
+
+from .conftest import _insert_admin, _insert_user, _insert_user_visit, _make_user
+
+
+class TestAdminGate:
+    """Verifies require_admin behavior on the admin-only endpoints."""
+
+    def test_admin_users_without_admin_grant_returns_403(self, test_app, db_conn):
+        """A signed-in non-admin must get 403, not 200, on /api/admin/*."""
+        from api.auth.dependencies import require_admin
+
+        # Insert the signed-in user but DO NOT grant admin.
+        _insert_user(
+            db_conn,
+            _make_user({"auth0_id": "auth0|test_user_123", "email": "test@example.com"}),
+        )
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/users")
+            assert resp.status_code == 403
+            assert "admin" in resp.json()["detail"].lower()
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_admin_users_without_auth_returns_401(self, test_app):
+        """An unauthenticated caller gets 401 before require_admin runs."""
+        from api.auth.dependencies import get_current_user, require_admin
+
+        saved_admin = test_app.dependency_overrides.pop(require_admin, None)
+        saved_current = test_app.dependency_overrides.pop(get_current_user, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/users")
+            assert resp.status_code == 401
+        finally:
+            if saved_current is not None:
+                test_app.dependency_overrides[get_current_user] = saved_current
+            if saved_admin is not None:
+                test_app.dependency_overrides[require_admin] = saved_admin
+
+    def test_admin_users_with_grant_returns_200(self, test_app, db_conn):
+        """Inserting an admin row for the test user removes the gate."""
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/users")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert "users" in body
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+
+class TestAdminUsersList:
+    """GET /api/admin/users payload shape and content."""
+
+    def test_returns_users_with_signup_provider_derived(self, client, db_conn):
+        _insert_user(
+            db_conn,
+            _make_user({
+                "id": "u1",
+                "auth0_id": "google-oauth2|abc",
+                "email": "g1@example.com",
+            }),
+        )
+        _insert_user(
+            db_conn,
+            _make_user({
+                "id": "u2",
+                "auth0_id": "google|xyz",
+                "email": "g2@example.com",
+            }),
+        )
+        _insert_user(
+            db_conn,
+            _make_user({
+                "id": "u3",
+                "auth0_id": "auth0|email-user",
+                "email": "e@example.com",
+            }),
+        )
+
+        resp = client.get("/api/admin/users")
+        assert resp.status_code == 200
+        users = resp.json()["users"]
+        by_email = {u["email"]: u for u in users}
+        assert by_email["g1@example.com"]["signupProvider"] == "google"
+        assert by_email["g2@example.com"]["signupProvider"] == "google"
+        assert by_email["e@example.com"]["signupProvider"] == "email"
+
+    def test_is_admin_reflects_admin_table(self, client, db_conn):
+        admin_user = _make_user(
+            {"id": "admin1", "auth0_id": "auth0|a1", "email": "admin@example.com"}
+        )
+        plain_user = _make_user(
+            {"id": "plain1", "auth0_id": "auth0|p1", "email": "plain@example.com"}
+        )
+        _insert_user(db_conn, admin_user)
+        _insert_user(db_conn, plain_user)
+        _insert_admin(db_conn, admin_user["id"])
+
+        resp = client.get("/api/admin/users")
+        users = resp.json()["users"]
+        by_email = {u["email"]: u for u in users}
+        assert by_email["admin@example.com"]["isAdmin"] is True
+        assert by_email["plain@example.com"]["isAdmin"] is False
+
+    def test_response_uses_camel_case_keys(self, client, db_conn):
+        _insert_user(
+            db_conn,
+            _make_user({
+                "id": "u1",
+                "auth0_id": "auth0|a",
+                "email": "a@example.com",
+            }),
+        )
+        resp = client.get("/api/admin/users")
+        row = resp.json()["users"][0]
+        expected = {
+            "id",
+            "email",
+            "displayName",
+            "signupProvider",
+            "createdAt",
+            "visitCount",
+            "lastVisitAt",
+            "isAdmin",
+        }
+        assert set(row.keys()) == expected
+
+    def test_includes_visit_count_and_last_visit_at(self, client, db_conn):
+        """The roster surfaces each user's visit_count (a seeded value round-
+        trips as camelCase ``visitCount``) plus ``lastVisitAt`` (null until the
+        user's first visit after this feature shipped)."""
+        _insert_user(
+            db_conn,
+            _make_user({
+                "id": "v1",
+                "auth0_id": "auth0|v1",
+                "email": "v1@example.com",
+                "visit_count": 7,
+            }),
+        )
+        resp = client.get("/api/admin/users")
+        assert resp.status_code == 200
+        row = next(
+            u for u in resp.json()["users"] if u["email"] == "v1@example.com"
+        )
+        assert row["visitCount"] == 7
+        assert row["lastVisitAt"] is None
+
+
+class TestAdminUsersStats:
+    """GET /api/admin/users/stats payload shape."""
+
+    def test_returns_totals_and_provider_breakdown(self, client, db_conn):
+        for i, (auth_prefix, email) in enumerate(
+            [
+                ("google-oauth2|", "a@example.com"),
+                ("google|", "b@example.com"),
+                ("auth0|", "c@example.com"),
+            ]
+        ):
+            _insert_user(
+                db_conn,
+                _make_user({
+                    "id": f"u{i}",
+                    "auth0_id": f"{auth_prefix}{i}",
+                    "email": email,
+                }),
+            )
+
+        resp = client.get("/api/admin/users/stats")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["totalUsers"] == 3
+        assert data["firstSignupAt"] is not None
+        assert data["latestSignupAt"] is not None
+        assert data["byProvider"]["google"] == 2
+        assert data["byProvider"]["email"] == 1
+
+    def test_returns_zero_when_no_users(self, client):
+        resp = client.get("/api/admin/users/stats")
+        data = resp.json()
+        assert data["totalUsers"] == 0
+        assert data["firstSignupAt"] is None
+        assert data["latestSignupAt"] is None
+        assert data["byProvider"] == {}
+
+
+class TestGrantAdmin:
+    """POST /api/admin/users/{user_id}/admin promotes a user."""
+
+    def _setup_caller(self, db_conn):
+        """Insert the test caller (the default admin from conftest) into users."""
+        caller = _make_user(
+            {
+                "id": "caller-id",
+                "auth0_id": "auth0|test_user_123",
+                "email": "test@example.com",
+            }
+        )
+        _insert_user(db_conn, caller)
+        return caller
+
+    def test_grant_admin_inserts_row(self, client, db_conn):
+        self._setup_caller(db_conn)
+        target = _make_user(
+            {"id": "target1", "auth0_id": "auth0|t1", "email": "promote@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        resp = client.post(f"/api/admin/users/{target['id']}/admin")
+        assert resp.status_code == 204
+
+        listing = client.get("/api/admin/users").json()["users"]
+        promoted = {u["id"]: u["isAdmin"] for u in listing}
+        assert promoted[target["id"]] is True
+
+    def test_grant_admin_idempotent(self, client, db_conn):
+        self._setup_caller(db_conn)
+        target = _make_user(
+            {"id": "target2", "auth0_id": "auth0|t2", "email": "twice@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        first = client.post(f"/api/admin/users/{target['id']}/admin")
+        second = client.post(f"/api/admin/users/{target['id']}/admin")
+        assert first.status_code == 204
+        assert second.status_code == 204
+
+    def test_grant_admin_unknown_user_returns_404(self, client, db_conn):
+        self._setup_caller(db_conn)
+
+        resp = client.post("/api/admin/users/does-not-exist/admin")
+        assert resp.status_code == 404
+        assert "not found" in resp.json()["detail"].lower()
+
+    def test_grant_admin_records_granted_by(self, client, db_conn):
+        caller = self._setup_caller(db_conn)
+        target = _make_user(
+            {"id": "target3", "auth0_id": "auth0|t3", "email": "audit@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        resp = client.post(f"/api/admin/users/{target['id']}/admin")
+        assert resp.status_code == 204
+
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT granted_by FROM admins WHERE user_id = %s", (target["id"],)
+            )
+            row = cur.fetchone()
+        assert row is not None
+        assert row["granted_by"] == caller["id"]
+
+    def test_grant_admin_idempotent_preserves_original_granted_by(
+        self, client, test_app, db_conn
+    ):
+        """``ON CONFLICT DO NOTHING`` must preserve the original granter.
+
+        If admin A grants user X, then admin B calls grant again on X, the
+        ``granted_by`` row must still point to A — the audit anchor is the
+        *first* grant, not the most recent retry. Regression guard for any
+        future switch to ``DO UPDATE``.
+        """
+        from api.auth.dependencies import get_current_user, require_admin
+
+        admin_a = self._setup_caller(db_conn)  # auth0|test_user_123 / test@example.com
+        target = _make_user(
+            {"id": "audit-target", "auth0_id": "auth0|tg", "email": "audit2@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        # First grant: as admin A (the default test caller).
+        resp_a = client.post(f"/api/admin/users/{target['id']}/admin")
+        assert resp_a.status_code == 204
+
+        # Insert admin B into users and admins, then flip the auth overrides
+        # so the next grant call is "as admin B".
+        admin_b = _make_user(
+            {"id": "admin-b-id", "auth0_id": "auth0|b", "email": "b@example.com"}
+        )
+        _insert_user(db_conn, admin_b)
+        _insert_admin(db_conn, admin_b["id"])
+
+        b_claims = {"sub": "auth0|b", "email": "b@example.com"}
+        saved_cu = test_app.dependency_overrides.get(get_current_user)
+        saved_ra = test_app.dependency_overrides.get(require_admin)
+        test_app.dependency_overrides[get_current_user] = lambda: b_claims
+        test_app.dependency_overrides[require_admin] = lambda: b_claims
+        try:
+            client_b = TestClient(test_app)
+            resp_b = client_b.post(f"/api/admin/users/{target['id']}/admin")
+            assert resp_b.status_code == 204
+        finally:
+            if saved_cu is not None:
+                test_app.dependency_overrides[get_current_user] = saved_cu
+            if saved_ra is not None:
+                test_app.dependency_overrides[require_admin] = saved_ra
+
+        # The audit row must STILL credit admin A.
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT granted_by FROM admins WHERE user_id = %s", (target["id"],)
+            )
+            row = cur.fetchone()
+        assert row is not None
+        assert row["granted_by"] == admin_a["id"], (
+            "ON CONFLICT DO NOTHING must preserve the original granter row"
+        )
+
+    def test_grant_admin_granter_fk_violation_returns_500_not_404(self):
+        """Granter-row-deleted race: 500, not a misleading 404.
+
+        ``admins`` has two FKs to ``users.id``. If the granter's user row
+        is deleted between ``_resolve_granter_id`` and the INSERT, the
+        ForeignKeyViolation comes from ``admins_granted_by_fkey`` — NOT
+        from the target user FK. The original handler mapped any FK
+        violation to "User not found", which pointed admins at the wrong
+        record. Unit-test the constraint-name branch here because the race
+        is impractical to integration-test.
+
+        psycopg2's real ``ForeignKeyViolation.diag`` is a C-level read-only
+        attribute, so we use a Python subclass that overrides ``diag`` via
+        a class-level descriptor — the router reads it via
+        ``getattr(exc.diag, "constraint_name", None)``, so duck-typing is
+        sufficient.
+        """
+        import psycopg2
+        from fastapi import HTTPException
+        from api.routers.admin import grant_user_admin
+
+        class _Diag:
+            constraint_name = "admins_granted_by_fkey"
+
+        class _FKViolation(psycopg2.errors.ForeignKeyViolation):
+            diag = _Diag()
+
+        exc = _FKViolation()
+
+        class _Conn:
+            def rollback(self):
+                pass
+
+        def _raising_grant(_conn, _user_id, granted_by_id):
+            raise exc
+
+        import api.routers.admin as admin_router
+
+        saved = admin_router.grant_admin
+        admin_router.grant_admin = _raising_grant
+        saved_resolve = admin_router._resolve_granter_id
+        admin_router._resolve_granter_id = lambda _c, _a: "granter-id"
+        try:
+            try:
+                grant_user_admin(
+                    user_id="any-target",
+                    conn=_Conn(),
+                    admin={"sub": "x", "email": "x@x"},
+                )
+            except HTTPException as http_exc:
+                assert http_exc.status_code == 500
+                assert "granter" in http_exc.detail.lower()
+            else:
+                raise AssertionError(
+                    "grant_user_admin should have raised HTTPException(500)"
+                )
+        finally:
+            admin_router.grant_admin = saved
+            admin_router._resolve_granter_id = saved_resolve
+
+    def test_grant_admin_target_fk_violation_returns_404(self):
+        """Sibling assertion to the granter-FK test: when the constraint
+        is ``admins_user_id_fkey`` (target user doesn't exist), the router
+        keeps the existing 404 → "User not found" translation."""
+        import psycopg2
+        from fastapi import HTTPException
+        from api.routers.admin import grant_user_admin
+
+        class _Diag:
+            constraint_name = "admins_user_id_fkey"
+
+        class _FKViolation(psycopg2.errors.ForeignKeyViolation):
+            diag = _Diag()
+
+        exc = _FKViolation()
+
+        class _Conn:
+            def rollback(self):
+                pass
+
+        def _raising_grant(_conn, _user_id, granted_by_id):
+            raise exc
+
+        import api.routers.admin as admin_router
+
+        saved = admin_router.grant_admin
+        admin_router.grant_admin = _raising_grant
+        saved_resolve = admin_router._resolve_granter_id
+        admin_router._resolve_granter_id = lambda _c, _a: "granter-id"
+        try:
+            try:
+                grant_user_admin(
+                    user_id="missing-target",
+                    conn=_Conn(),
+                    admin={"sub": "x", "email": "x@x"},
+                )
+            except HTTPException as http_exc:
+                assert http_exc.status_code == 404
+                assert "not found" in http_exc.detail.lower()
+            else:
+                raise AssertionError(
+                    "grant_user_admin should have raised HTTPException(404)"
+                )
+        finally:
+            admin_router.grant_admin = saved
+            admin_router._resolve_granter_id = saved_resolve
+
+
+class TestRevokeAdmin:
+    """DELETE /api/admin/users/{user_id}/admin revokes a user."""
+
+    def _setup_caller_with_grant(self, db_conn):
+        caller = _make_user(
+            {
+                "id": "caller-id",
+                "auth0_id": "auth0|test_user_123",
+                "email": "test@example.com",
+            }
+        )
+        _insert_user(db_conn, caller)
+        _insert_admin(db_conn, caller["id"])
+        return caller
+
+    def test_revoke_admin_deletes_row(self, client, db_conn):
+        self._setup_caller_with_grant(db_conn)
+        target = _make_user(
+            {"id": "target1", "auth0_id": "auth0|t1", "email": "demote@example.com"}
+        )
+        _insert_user(db_conn, target)
+        _insert_admin(db_conn, target["id"])
+
+        resp = client.delete(f"/api/admin/users/{target['id']}/admin")
+        assert resp.status_code == 204
+
+        listing = client.get("/api/admin/users").json()["users"]
+        demoted = {u["id"]: u["isAdmin"] for u in listing}
+        assert demoted[target["id"]] is False
+
+    def test_revoke_admin_idempotent_on_non_admin(self, client, db_conn):
+        self._setup_caller_with_grant(db_conn)
+        target = _make_user(
+            {"id": "target2", "auth0_id": "auth0|t2", "email": "notadmin@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        resp = client.delete(f"/api/admin/users/{target['id']}/admin")
+        assert resp.status_code == 204
+
+    def test_revoke_self_returns_400(self, client, db_conn):
+        caller = self._setup_caller_with_grant(db_conn)
+
+        resp = client.delete(f"/api/admin/users/{caller['id']}/admin")
+        assert resp.status_code == 400
+        assert "own" in resp.json()["detail"].lower()
+
+    def test_revoke_last_admin_returns_409(self, client, db_conn):
+        """Last-admin guardrail: revoking the only admin must 409, not 204.
+
+        The router-level self-revoke 400 only protects against a single
+        admin revoking themselves. Two admins acting concurrently can each
+        pass the self-check and try to revoke the other; the service-level
+        ``FOR UPDATE`` + count guard is what actually prevents zero-admins.
+
+        Setup: caller is a *non-admin* (the require_admin override below is
+        what lets them past the auth gate). The only admin row in the table
+        belongs to a different user — and revoking it would leave zero.
+        """
+        # Caller must exist in users (for granter resolution), but is NOT
+        # the admin in this scenario.
+        caller = _make_user(
+            {
+                "id": "caller-id-not-admin",
+                "auth0_id": "auth0|test_user_123",
+                "email": "test@example.com",
+            }
+        )
+        _insert_user(db_conn, caller)
+        # The single admin in the system is a DIFFERENT user.
+        sole_admin = _make_user(
+            {"id": "sole-admin", "auth0_id": "auth0|sole", "email": "sole@example.com"}
+        )
+        _insert_user(db_conn, sole_admin)
+        _insert_admin(db_conn, sole_admin["id"])
+
+        # The caller passes require_admin via the default test override,
+        # so they reach the revoke handler. Since caller != sole_admin, the
+        # self-revoke 400 doesn't fire; the LastAdminError → 409 does.
+        resp = client.delete(f"/api/admin/users/{sole_admin['id']}/admin")
+        assert resp.status_code == 409, resp.text
+        assert "last admin" in resp.json()["detail"].lower()
+
+        # Row must still be present — guardrail must NOT delete-then-undo.
+        with db_conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM admins WHERE user_id = %s", (sole_admin["id"],)
+            )
+            row = cur.fetchone()
+        assert row is not None
+
+    def test_revoke_admin_uses_for_update_lock(self):
+        """Source-level pin: the FOR UPDATE row lock is the entire contract
+        of the last-admin guardrail. The single-connection test suite cannot
+        reliably reproduce the concurrent revoke race (a true two-connection
+        race would be flaky against TestClient's threading model), so this
+        guard inspects ``inspect.getsource(revoke_admin)`` and asserts the
+        ``FOR UPDATE`` clause appears inside an actual SQL string literal —
+        not just in a comment.
+
+        The original check was a plain ``"FOR UPDATE" in source`` substring
+        test, which would still pass if a regression left the token in a
+        comment while removing it from the SQL. We strip comments first,
+        then require a regex match against the literal SQL pattern
+        ``SELECT user_id FROM {admins} FOR UPDATE`` (no WHERE between
+        SELECT and FOR UPDATE — a WHERE would scope locks to one row and
+        re-open the race).
+        """
+        import inspect
+        import re
+        from api.services.admin_service import revoke_admin
+
+        source = inspect.getsource(revoke_admin)
+
+        # Strip ``#``-comments line-by-line so a ``# FOR UPDATE`` comment
+        # cannot satisfy the assertion. Python doesn't have block comments
+        # inside function bodies (triple-quoted strings are docstrings only
+        # at the top), so line-level stripping is sufficient.
+        comment_stripped = "\n".join(
+            line.split("#", 1)[0] for line in source.splitlines()
+        )
+
+        # Pin the exact SELECT we expect. Matches the literal SQL string
+        # passed to ``sql.SQL(...)``:
+        #     "SELECT user_id FROM {admins} FOR UPDATE"
+        # If the SQL changes to add a WHERE clause between SELECT and FOR
+        # UPDATE, this regex will not match — and that's the point: a
+        # row-scoped lock re-opens the concurrent-revoke race.
+        pattern = re.compile(
+            r"SELECT\s+user_id\s+FROM\s+\{admins\}\s+FOR\s+UPDATE",
+            re.IGNORECASE,
+        )
+        assert pattern.search(comment_stripped), (
+            "revoke_admin must execute a SELECT user_id FROM {admins} FOR "
+            "UPDATE (no WHERE between SELECT and FOR UPDATE) to serialize "
+            "concurrent revokes — see LastAdminError docstring. The literal "
+            "SQL must appear inside a sql.SQL(...) string, not in a "
+            "comment."
+        )
+
+        # Belt-and-suspenders: the literal token "FOR UPDATE" must also
+        # be reachable inside the function (defense in depth against a
+        # future SQL-builder refactor that constructs the clause from
+        # variables).
+        assert "FOR UPDATE" in comment_stripped, (
+            "FOR UPDATE token must appear in revoke_admin source (outside "
+            "of comments)."
+        )
+
+    def test_revoke_when_multiple_admins_exist_succeeds(self, client, db_conn):
+        """The last-admin guardrail must NOT fire when 2+ admins exist."""
+        caller = self._setup_caller_with_grant(db_conn)
+        # caller is an admin (granted in setup helper). Add a SECOND admin.
+        second = _make_user(
+            {"id": "second-admin", "auth0_id": "auth0|second", "email": "second@example.com"}
+        )
+        _insert_user(db_conn, second)
+        _insert_admin(db_conn, second["id"])
+
+        # Revoke the second admin — caller stays admin. Count goes 2 → 1,
+        # so the guardrail must allow it.
+        resp = client.delete(f"/api/admin/users/{second['id']}/admin")
+        assert resp.status_code == 204
+
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS n FROM admins")
+            assert cur.fetchone()["n"] == 1
+            cur.execute("SELECT 1 FROM admins WHERE user_id = %s", (caller["id"],))
+            assert cur.fetchone() is not None
+
+
+class TestGrantRevokeGate:
+    """Grant/revoke endpoints are also behind require_admin."""
+
+    def test_grant_without_admin_returns_403(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        _insert_user(
+            db_conn,
+            _make_user(
+                {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+            ),
+        )
+        target = _make_user(
+            {"id": "tg1", "auth0_id": "auth0|tg1", "email": "t@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        saved = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.post(f"/api/admin/users/{target['id']}/admin")
+            assert resp.status_code == 403
+        finally:
+            if saved is not None:
+                test_app.dependency_overrides[require_admin] = saved
+
+    def test_revoke_without_admin_returns_403(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        _insert_user(
+            db_conn,
+            _make_user(
+                {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+            ),
+        )
+        target = _make_user(
+            {"id": "tr1", "auth0_id": "auth0|tr1", "email": "t@example.com"}
+        )
+        _insert_user(db_conn, target)
+        _insert_admin(db_conn, target["id"])
+
+        saved = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.delete(f"/api/admin/users/{target['id']}/admin")
+            assert resp.status_code == 403
+        finally:
+            if saved is not None:
+                test_app.dependency_overrides[require_admin] = saved
+
+
+class TestSignupProviderHelper:
+    """Direct unit tests for ``_signup_provider_from_auth0_id``.
+
+    The helper is the *producer* of ``SignupProvider`` literals consumed by
+    ``AdminUsersStatsResponse.by_provider: dict[SignupProvider, int]`` —
+    Pydantic v2 validates that dict's keys at runtime, so a producer that
+    silently returns a non-Literal would make ``/api/admin/users/stats``
+    500 for every admin once a new IdP prefix landed in production.
+
+    The previous ``-> str`` return type was permissive enough that a
+    future ``return "github"`` would type-check but blow up at the
+    serialization boundary. With the tightened ``-> SignupProvider``
+    return type these tests pin both the mapping AND the closed-set
+    contract; a regression to ``-> str`` would still pass the tests but
+    fail mypy/pyright in CI.
+    """
+
+    def test_unknown_prefix_returns_other(self):
+        from api.services.admin_service import _signup_provider_from_auth0_id
+
+        # A wholly-new IdP prefix must fall through to "other" — never
+        # raise, never return a raw prefix that would then violate the
+        # AdminUsersStatsResponse Pydantic Literal validation.
+        assert _signup_provider_from_auth0_id("github|abc123") == "other"
+
+    def test_no_pipe_returns_other(self):
+        from api.services.admin_service import _signup_provider_from_auth0_id
+
+        # Malformed auth0_id with no pipe separator still maps to a
+        # closed-set value (the prefix-extraction branch returns the
+        # whole string when there's no pipe).
+        assert _signup_provider_from_auth0_id("bareid") == "other"
+
+    def test_google_prefix(self):
+        from api.services.admin_service import _signup_provider_from_auth0_id
+
+        assert _signup_provider_from_auth0_id("google|123") == "google"
+
+    def test_google_oauth2_prefix(self):
+        from api.services.admin_service import _signup_provider_from_auth0_id
+
+        assert _signup_provider_from_auth0_id("google-oauth2|abc") == "google"
+
+    def test_auth0_prefix_maps_to_email(self):
+        from api.services.admin_service import _signup_provider_from_auth0_id
+
+        assert _signup_provider_from_auth0_id("auth0|abc") == "email"
+
+
+class TestResolveGranterIdBranches:
+    """Edge branches of ``_resolve_granter_id`` that aren't covered by the
+    happy-path grant tests."""
+
+    def test_grant_without_email_claim_returns_401(self, test_app, db_conn):
+        """``require_admin`` would normally 401 first, but if a custom override
+        ever returns claims without ``email`` (e.g. a misconfigured auth
+        bypass), the granter resolver's defensive 401 must still fire."""
+        from api.auth.dependencies import get_current_user, require_admin
+
+        target = _make_user(
+            {"id": "tg-no-email", "auth0_id": "auth0|tge", "email": "tge@example.com"}
+        )
+        _insert_user(db_conn, target)
+
+        no_email_claims = {"sub": "auth0|no_email"}
+        saved_cu = test_app.dependency_overrides.get(get_current_user)
+        saved_ra = test_app.dependency_overrides.get(require_admin)
+        test_app.dependency_overrides[get_current_user] = lambda: no_email_claims
+        # Force past require_admin even though there's no email — the bypass
+        # is what makes the granter-resolver branch reachable.
+        test_app.dependency_overrides[require_admin] = lambda: no_email_claims
+        try:
+            client = TestClient(test_app)
+            resp = client.post(f"/api/admin/users/{target['id']}/admin")
+            assert resp.status_code == 401
+            assert "email" in resp.json()["detail"].lower()
+        finally:
+            if saved_cu is not None:
+                test_app.dependency_overrides[get_current_user] = saved_cu
+            if saved_ra is not None:
+                test_app.dependency_overrides[require_admin] = saved_ra
+
+
+class TestJobsQaGate:
+    """jobs_qa router is now gated behind require_admin.
+
+    Each endpoint declares its own ``Depends(require_admin)`` rather than
+    inheriting a router-level dependency, so the gate has to be re-checked
+    per endpoint — a future endpoint added without the dep would silently
+    re-open the hole that motivated this PR.
+    """
+
+    def test_jobs_qa_stats_without_admin_returns_403(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        _insert_user(
+            db_conn,
+            _make_user({"auth0_id": "auth0|test_user_123", "email": "test@example.com"}),
+        )
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/jobs-qa/stats")
+            assert resp.status_code == 403
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_jobs_qa_scrape_runs_without_admin_returns_403(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        _insert_user(
+            db_conn,
+            _make_user({"auth0_id": "auth0|test_user_123", "email": "test@example.com"}),
+        )
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/jobs-qa/scrape-runs")
+            assert resp.status_code == 403
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_jobs_qa_trigger_scrape_without_admin_returns_403(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        _insert_user(
+            db_conn,
+            _make_user({"auth0_id": "auth0|test_user_123", "email": "test@example.com"}),
+        )
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.post("/api/jobs-qa/trigger-scrape", params={"company": "google"})
+            assert resp.status_code == 403
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+
+def _insert_feedback(
+    db_conn, fid, message="m", created_at=None, user_id=None,
+    user_email=None, display_name=None,
+):
+    cur = db_conn.cursor()
+    if created_at is None:
+        cur.execute(
+            sql.SQL(
+                "INSERT INTO {} (id, message, user_id, user_email, display_name)"
+                " VALUES (%s, %s, %s, %s, %s)"
+            ).format(sql.Identifier("feedback")),
+            (fid, message, user_id, user_email, display_name),
+        )
+    else:
+        cur.execute(
+            sql.SQL(
+                "INSERT INTO {} (id, message, user_id, user_email, display_name,"
+                " created_at) VALUES (%s, %s, %s, %s, %s, %s)"
+            ).format(sql.Identifier("feedback")),
+            (fid, message, user_id, user_email, display_name, created_at),
+        )
+    db_conn.commit()
+
+
+class TestAdminFeedbackList:
+    """GET /api/admin/feedback — gate + payload shape."""
+
+    def test_without_auth_returns_401(self, test_app):
+        from api.auth.dependencies import get_current_user, require_admin
+
+        saved_admin = test_app.dependency_overrides.pop(require_admin, None)
+        saved_current = test_app.dependency_overrides.pop(get_current_user, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/feedback")
+            assert resp.status_code == 401
+        finally:
+            if saved_current is not None:
+                test_app.dependency_overrides[get_current_user] = saved_current
+            if saved_admin is not None:
+                test_app.dependency_overrides[require_admin] = saved_admin
+
+    def test_non_admin_returns_403(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        _insert_user(
+            db_conn,
+            _make_user({"auth0_id": "auth0|test_user_123", "email": "test@example.com"}),
+        )
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/feedback")
+            assert resp.status_code == 403
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_admin_returns_feedback_newest_first(self, test_app, db_conn):
+        from datetime import datetime, timedelta, timezone
+
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        _insert_feedback(db_conn, "a", "oldest", created_at=base)
+        _insert_feedback(
+            db_conn, "b", "from user", created_at=base + timedelta(hours=1),
+            user_id=user["id"], user_email="test@example.com", display_name="Tester",
+        )
+        _insert_feedback(db_conn, "c", "anon newest", created_at=base + timedelta(hours=2))
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/feedback")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            rows = body["feedback"]
+            assert body["total"] == 3
+            assert [r["message"] for r in rows] == ["anon newest", "from user", "oldest"]
+            # camelCase keys and an anonymous row surfaces with null user fields.
+            assert set(rows[0].keys()) == {
+                "id", "message", "userId", "userEmail", "displayName", "createdAt",
+            }
+            assert rows[0]["userId"] is None and rows[0]["userEmail"] is None
+            assert rows[1]["userEmail"] == "test@example.com"
+            assert rows[1]["displayName"] == "Tester"
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_returns_one_page_with_total_reflecting_all_rows(self, test_app, db_conn):
+        # Server-side pagination: a page returns at most ``limit`` rows, but
+        # ``total`` reports the full count so the UI pager can reach everything.
+        from datetime import datetime, timedelta, timezone
+
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        for i in range(60):
+            _insert_feedback(
+                db_conn, f"id{i}", f"m{i}", created_at=base + timedelta(minutes=i)
+            )
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            # Param-less call uses the default page size (25), not the whole set.
+            resp = client.get("/api/admin/feedback")
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body["feedback"]) == 25
+            assert body["total"] == 60
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_offset_paging_returns_the_right_slice(self, test_app, db_conn):
+        from datetime import datetime, timedelta, timezone
+
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        for i in range(5):
+            _insert_feedback(
+                db_conn, f"id{i}", f"m{i}", created_at=base + timedelta(minutes=i)
+            )
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            # Newest-first: m4, m3, m2, m1, m0
+            page1 = client.get("/api/admin/feedback", params={"limit": 2, "offset": 0})
+            page2 = client.get("/api/admin/feedback", params={"limit": 2, "offset": 2})
+            assert [r["message"] for r in page1.json()["feedback"]] == ["m4", "m3"]
+            assert [r["message"] for r in page2.json()["feedback"]] == ["m2", "m1"]
+            assert page1.json()["total"] == 5
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_sort_dir_asc_flips_order(self, test_app, db_conn):
+        from datetime import datetime, timedelta, timezone
+
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+
+        base = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        _insert_feedback(db_conn, "a", "oldest", created_at=base)
+        _insert_feedback(db_conn, "b", "newest", created_at=base + timedelta(hours=1))
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/feedback", params={"sort_dir": "asc"})
+            assert resp.status_code == 200, resp.text
+            assert [r["message"] for r in resp.json()["feedback"]] == ["oldest", "newest"]
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_bad_sort_dir_returns_422(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/feedback", params={"sort_dir": "sideways"})
+            assert resp.status_code == 422
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+    def test_limit_over_cap_returns_422(self, test_app, db_conn):
+        from api.auth.dependencies import require_admin
+
+        user = _make_user(
+            {"auth0_id": "auth0|test_user_123", "email": "test@example.com"}
+        )
+        _insert_user(db_conn, user)
+        _insert_admin(db_conn, user["id"])
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            client = TestClient(test_app)
+            resp = client.get("/api/admin/feedback", params={"limit": 201})
+            assert resp.status_code == 422
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
+
+
+class TestAdminUserVisits:
+    """GET /api/admin/users/{user_id}/visits — the roster's Visits modal feed."""
+
+    def test_returns_visits_desc_with_camel_case_keys(self, client, db_conn):
+        user = _make_user({"id": "uv1", "auth0_id": "auth0|uv1", "email": "uv1@example.com",
+                           "visit_count": 3})
+        _insert_user(db_conn, user)
+        _insert_user_visit(db_conn, "uv1", "2026-06-01T10:00:00Z")
+        _insert_user_visit(db_conn, "uv1", "2026-06-03T10:00:00Z")
+        _insert_user_visit(db_conn, "uv1", "2026-06-02T10:00:00Z")
+
+        resp = client.get("/api/admin/users/uv1/visits")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body.keys()) == {"visits", "totalVisitCount", "truncated"}
+        assert body["totalVisitCount"] == 3
+        assert body["truncated"] is False
+        assert len(body["visits"]) == 3
+        # Most-recent first (ISO strings sort lexically for a fixed format/tz).
+        assert body["visits"] == sorted(body["visits"], reverse=True)
+
+    def test_404_for_unknown_user(self, client):
+        resp = client.get("/api/admin/users/does-not-exist/visits")
+        assert resp.status_code == 404
+
+    def test_gap_when_count_exceeds_logged_history(self, client, db_conn):
+        """A pre-launch user can have visit_count > the number of logged rows;
+        the endpoint reports both so the modal can show the gap caption."""
+        user = _make_user({"id": "uv2", "auth0_id": "auth0|uv2", "email": "uv2@example.com",
+                           "visit_count": 10})
+        _insert_user(db_conn, user)
+        _insert_user_visit(db_conn, "uv2", "2026-06-01T10:00:00Z")
+        _insert_user_visit(db_conn, "uv2", "2026-06-02T10:00:00Z")
+
+        body = client.get("/api/admin/users/uv2/visits").json()
+        assert len(body["visits"]) == 2
+        assert body["totalVisitCount"] == 10
+        assert body["truncated"] is False
+
+    def test_empty_history_for_user_with_no_log_rows(self, client, db_conn):
+        user = _make_user({"id": "uv3", "auth0_id": "auth0|uv3", "email": "uv3@example.com"})
+        _insert_user(db_conn, user)
+        body = client.get("/api/admin/users/uv3/visits").json()
+        assert body["visits"] == []
+        assert body["totalVisitCount"] == 0
+        assert body["truncated"] is False
+
+    def test_truncated_true_when_log_exceeds_cap(self, client, db_conn, monkeypatch):
+        """When the log has MORE rows than the server cap, the endpoint trims to
+        the cap and reports ``truncated: true``.
+
+        Monkeypatch the cap to 2 (instead of inserting 500+ rows). The router
+        calls ``list_user_visits(conn, user_id)`` with no explicit limit, and
+        the service resolves ``_USER_VISITS_LIMIT`` at call time — so patching
+        the module attribute the service actually reads (``api.services.
+        user_service._USER_VISITS_LIMIT``) takes effect."""
+        monkeypatch.setattr("api.services.user_service._USER_VISITS_LIMIT", 2)
+        user = _make_user({"id": "uv4", "auth0_id": "auth0|uv4",
+                           "email": "uv4@example.com", "visit_count": 3})
+        _insert_user(db_conn, user)
+        _insert_user_visit(db_conn, "uv4", "2026-06-01T10:00:00Z")
+        _insert_user_visit(db_conn, "uv4", "2026-06-02T10:00:00Z")
+        _insert_user_visit(db_conn, "uv4", "2026-06-03T10:00:00Z")
+
+        body = client.get("/api/admin/users/uv4/visits").json()
+        assert len(body["visits"]) == 2  # trimmed to the cap
+        assert body["truncated"] is True
+        # Newest-first, trimmed to the two most recent.
+        assert body["visits"] == sorted(body["visits"], reverse=True)
+
+    def test_truncated_false_when_exactly_at_cap(self, client, db_conn, monkeypatch):
+        """Boundary: EXACTLY ``cap`` logged rows is NOT truncated (nothing was
+        dropped) — the off-by-one a ``len(visits) >= cap`` re-derivation gets
+        wrong. Same cap monkeypatch as the truncated-true case."""
+        monkeypatch.setattr("api.services.user_service._USER_VISITS_LIMIT", 2)
+        user = _make_user({"id": "uv5", "auth0_id": "auth0|uv5",
+                           "email": "uv5@example.com", "visit_count": 2})
+        _insert_user(db_conn, user)
+        _insert_user_visit(db_conn, "uv5", "2026-06-01T10:00:00Z")
+        _insert_user_visit(db_conn, "uv5", "2026-06-02T10:00:00Z")
+
+        body = client.get("/api/admin/users/uv5/visits").json()
+        assert len(body["visits"]) == 2
+        assert body["truncated"] is False
+
+    def test_visits_without_admin_grant_returns_403(self, test_app, db_conn):
+        """Non-admin callers are gated, same as the other admin endpoints."""
+        from api.auth.dependencies import require_admin
+
+        user = _make_user({"auth0_id": "auth0|test_user_123", "email": "test@example.com"})
+        _insert_user(db_conn, user)  # signed in, but no admin grant
+
+        saved_override = test_app.dependency_overrides.pop(require_admin, None)
+        try:
+            no_admin = TestClient(test_app)
+            resp = no_admin.get(f"/api/admin/users/{user['id']}/visits")
+            assert resp.status_code == 403
+        finally:
+            if saved_override is not None:
+                test_app.dependency_overrides[require_admin] = saved_override
