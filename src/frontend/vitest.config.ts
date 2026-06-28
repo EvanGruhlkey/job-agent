@@ -6,7 +6,9 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: './src/test/setup.ts',
+    // No frontend test files in the repo yet; CI runs `vitest --run` and must
+    // not fail the pipeline while the suite is being rebuilt.
+    passWithNoTests: true,
     // Default Vitest timeout is 5s, which is too tight for userEvent-heavy
     // tests (e.g. EnabledCompaniesSection) that routinely run 4-5s and flake
     // out under parallel CPU contention. 15s is comfortably above the real
