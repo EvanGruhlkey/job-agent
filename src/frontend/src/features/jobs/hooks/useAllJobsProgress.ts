@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useGetAllJobsQuery } from '../jobsApi.ts';
+import { useAuth } from '../../auth/useAuth';
 import type { Job, CompanyFetchProgress } from '../../../types';
 
 /**
@@ -78,7 +79,11 @@ export interface UseAllJobsProgressResult {
  * ```
  */
 export function useAllJobsProgress(): UseAllJobsProgressResult {
-  const { data, isLoading, isFetching, error, isError } = useGetAllJobsQuery();
+  const { isAuthenticated, isEnabled, isLoading: authLoading } = useAuth();
+  const shouldFetchJobs = !isEnabled || isAuthenticated;
+  const { data, isLoading, isFetching, error, isError } = useGetAllJobsQuery(undefined, {
+    skip: !shouldFetchJobs || authLoading,
+  });
 
   // Combine loading states: RTK Query states + custom streaming flag
   const isStillLoading = isLoading || isFetching || (data?.isStreaming ?? false);

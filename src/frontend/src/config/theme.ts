@@ -5,6 +5,9 @@
 
 import { createTheme } from '@mui/material/styles';
 
+const APP_FONT_FAMILY =
+  '"Geist Variable", Geist, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
 /**
  * Monochrome theme for the application.
  * Uses black/white/gray palette for clean, professional appearance.
@@ -56,7 +59,7 @@ export const theme = createTheme({
     },
   },
   typography: {
-    fontFamily: '"Helvetica", "Arial", sans-serif',
+    fontFamily: APP_FONT_FAMILY,
     h1: {
       fontSize: '2.5rem',
       fontWeight: 600,

@@ -4,8 +4,20 @@ import type { BackendScraperConfig } from '../../types';
 import { APIError } from '../types';
 import { logger } from '../../lib/logger';
 import { transformBackendJob } from '../transformers/backendScraperTransformer';
+import { getTokenOrNull } from '../../features/features/getTokenOrNull';
 
 const DEFAULT_BACKEND_JOBS_URL = '/api/jobs';
+
+async function buildAuthHeaders(): Promise<Record<string, string>> {
+  const token = await getTokenOrNull();
+  if (!token) {
+    throw new APIError('Authentication required', 401, 'backend-scraper', false);
+  }
+  return {
+    Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
 
 /**
  * Backend scraper client - fetches jobs from backend API for scraped companies
@@ -40,12 +52,10 @@ export const backendScraperClient: JobAPIClient = {
     logger.debug(`[Backend Scraper Client] Fetching ${backendConfig.companyId} jobs from:`, url);
 
     try {
-      // 3. Fetch from backend API
+      const headers = await buildAuthHeaders();
       const response = await fetch(url, {
         signal: options.signal,
-        headers: {
-          Accept: 'application/json',
-        },
+        headers,
       });
 
       logger.debug('[Backend Scraper Client] Response status:', response.status);
@@ -186,9 +196,10 @@ async function _fetchJobsChunk(
 
   let data: BackendJobListing[];
   try {
+    const headers = await buildAuthHeaders();
     const response = await fetch(url, {
       signal: options.signal,
-      headers: { Accept: 'application/json' },
+      headers,
     });
 
     if (!response.ok) {

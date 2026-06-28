@@ -7,7 +7,7 @@ import psycopg2
 from fastapi.testclient import TestClient
 from psycopg2 import sql
 
-from api.auth.dependencies import get_current_user, get_optional_user
+from api.auth.dependencies import get_current_user
 from api.dependencies import get_db
 
 
@@ -23,88 +23,67 @@ def _insert_feature(db_conn, feature_id, title="T", description="D", completed_a
     db_conn.commit()
 
 
-class TestListFeaturesAnonymous:
-    def test_returns_empty_list_when_no_features(self, test_app, db_conn):
-        test_app.dependency_overrides[get_optional_user] = lambda: None
-        try:
-            client = TestClient(test_app)
-            resp = client.get("/api/features")
-            assert resp.status_code == 200
-            assert resp.json() == {"features": []}
-        finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+class TestListFeatures:
+    def test_returns_empty_list_when_no_features(self, client):
+        resp = client.get("/api/features")
+        assert resp.status_code == 200
+        assert resp.json() == {"features": []}
 
-    def test_returns_features_with_has_upvoted_false(self, test_app, db_conn):
+    def test_returns_features_with_has_upvoted_false(self, client, db_conn):
         _insert_feature(db_conn, "f1", "Title 1", "Desc 1")
-        test_app.dependency_overrides[get_optional_user] = lambda: None
-        try:
-            client = TestClient(test_app)
-            resp = client.get("/api/features")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert len(data["features"]) == 1
-            feat = data["features"][0]
-            assert feat["id"] == "f1"
-            assert feat["title"] == "Title 1"
-            assert feat["description"] == "Desc 1"
-            assert feat["upvoteCount"] == 0
-            assert feat["hasUpvoted"] is False
-            assert "createdAt" in feat
-            assert feat["completedAt"] is None
-        finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+        resp = client.get("/api/features")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["features"]) == 1
+        feat = data["features"][0]
+        assert feat["id"] == "f1"
+        assert feat["title"] == "Title 1"
+        assert feat["description"] == "Desc 1"
+        assert feat["upvoteCount"] == 0
+        assert feat["hasUpvoted"] is False
+        assert "createdAt" in feat
+        assert feat["completedAt"] is None
 
-    def test_camel_case_keys(self, test_app, db_conn):
+    def test_camel_case_keys(self, client, db_conn):
         _insert_feature(db_conn, "f1")
-        test_app.dependency_overrides[get_optional_user] = lambda: None
-        try:
-            client = TestClient(test_app)
-            data = client.get("/api/features").json()
-            feat = data["features"][0]
-            assert set(feat.keys()) == {
-                "id", "title", "description", "createdAt", "completedAt",
-                "upvoteCount", "hasUpvoted",
-            }
-        finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+        data = client.get("/api/features").json()
+        feat = data["features"][0]
+        assert set(feat.keys()) == {
+            "id", "title", "description", "createdAt", "completedAt",
+            "upvoteCount", "hasUpvoted",
+        }
 
-    def test_completed_at_serialized_when_set(self, test_app, db_conn):
+    def test_completed_at_serialized_when_set(self, client, db_conn):
         _insert_feature(
             db_conn,
             "f1",
             completed_at="2026-06-01T12:00:00+00:00",
         )
-        test_app.dependency_overrides[get_optional_user] = lambda: None
+        data = client.get("/api/features").json()
+        feat = data["features"][0]
+        assert feat["completedAt"] is not None
+        assert feat["completedAt"].startswith("2026-06-01T12:00:00")
+
+    def test_401_without_auth(self, test_app, db_conn):
+        saved = test_app.dependency_overrides.pop(get_current_user, None)
         try:
-            client = TestClient(test_app)
-            data = client.get("/api/features").json()
-            feat = data["features"][0]
-            assert feat["completedAt"] is not None
-            assert feat["completedAt"].startswith("2026-06-01T12:00:00")
+            resp = TestClient(test_app).get("/api/features")
+            assert resp.status_code == 401
         finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+            if saved is not None:
+                test_app.dependency_overrides[get_current_user] = saved
 
 
 class TestListFeaturesAuthed:
-    def test_has_upvoted_reflects_own_upvote(self, test_app, client, db_conn):
+    def test_has_upvoted_reflects_own_upvote(self, client, db_conn):
         _insert_feature(db_conn, "f1")
         resp_post = client.post("/api/features/f1/upvote")
         assert resp_post.status_code == 200
-        test_app.dependency_overrides[get_optional_user] = lambda: {
-            "sub": "auth0|test_user_123",
-            "email": "test@example.com",
-            "given_name": "Test",
-            "family_name": "User",
-            "picture": "https://example.com/photo.jpg",
-        }
-        try:
-            resp_get = client.get("/api/features")
-            assert resp_get.status_code == 200
-            feat = resp_get.json()["features"][0]
-            assert feat["upvoteCount"] == 1
-            assert feat["hasUpvoted"] is True
-        finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+        resp_get = client.get("/api/features")
+        assert resp_get.status_code == 200
+        feat = resp_get.json()["features"][0]
+        assert feat["upvoteCount"] == 1
+        assert feat["hasUpvoted"] is True
 
 
 class TestPostUpvote:
@@ -251,10 +230,7 @@ class TestListFeaturesNoUserRow:
         self, test_app, db_conn
     ):
         _insert_feature(db_conn, "f1", "Title", "Desc")
-        # Override get_optional_user with claims for a user whose row we have
-        # NOT inserted into `users`. get_user_by_email will return None
-        # and _resolve_optional_user_id should fall back to None silently.
-        test_app.dependency_overrides[get_optional_user] = lambda: {
+        test_app.dependency_overrides[get_current_user] = lambda: {
             "sub": "auth0|first_visit_user",
             "email": "first_visit@example.com",
         }
@@ -267,7 +243,7 @@ class TestListFeaturesNoUserRow:
             assert features[0]["hasUpvoted"] is False
             assert features[0]["upvoteCount"] == 0
         finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+            test_app.dependency_overrides.pop(get_current_user, None)
 
 
 class TestListFeaturesDbErrorRollback:
@@ -287,7 +263,6 @@ class TestListFeaturesDbErrorRollback:
             yield mock_conn
 
         saved_get_db = test_app.dependency_overrides.get(get_db)
-        test_app.dependency_overrides[get_optional_user] = lambda: None
         test_app.dependency_overrides[get_db] = _override_get_db
         try:
             with patch(
@@ -300,7 +275,6 @@ class TestListFeaturesDbErrorRollback:
             assert resp.json()["detail"] == "Failed to list features"
             mock_conn.rollback.assert_called_once()
         finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
             if saved_get_db is not None:
                 test_app.dependency_overrides[get_db] = saved_get_db
             else:
@@ -321,7 +295,7 @@ class TestResolveOptionalUserIdDbErrorFallback:
     ):
         _insert_feature(db_conn, "f1", "Title", "Desc")
         _insert_feature(db_conn, "f2", "Another", "Desc2")
-        test_app.dependency_overrides[get_optional_user] = lambda: {
+        test_app.dependency_overrides[get_current_user] = lambda: {
             "sub": "auth0|some_user",
             "email": "anyone@example.com",
         }
@@ -348,7 +322,7 @@ class TestResolveOptionalUserIdDbErrorFallback:
                 "api.routers.features when get_user_by_email raises psycopg2.Error"
             )
         finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+            test_app.dependency_overrides.pop(get_current_user, None)
 
     def test_rollback_invoked_on_get_user_by_email_db_error(
         self, test_app, db_conn
@@ -363,7 +337,7 @@ class TestResolveOptionalUserIdDbErrorFallback:
             yield mock_conn
 
         saved_get_db = test_app.dependency_overrides.get(get_db)
-        test_app.dependency_overrides[get_optional_user] = lambda: {
+        test_app.dependency_overrides[get_current_user] = lambda: {
             "sub": "auth0|some_user",
             "email": "anyone@example.com",
         }
@@ -381,7 +355,7 @@ class TestResolveOptionalUserIdDbErrorFallback:
             assert resp.status_code == 200
             mock_conn.rollback.assert_called_once()
         finally:
-            test_app.dependency_overrides.pop(get_optional_user, None)
+            test_app.dependency_overrides.pop(get_current_user, None)
             if saved_get_db is not None:
                 test_app.dependency_overrides[get_db] = saved_get_db
             else:

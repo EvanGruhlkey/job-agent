@@ -73,6 +73,19 @@ def test_get_jobs_returns_all_when_no_filters(client):
     assert len(resp.json()) == 4
 
 
+def test_get_jobs_401_without_auth(test_app):
+    from api.auth.dependencies import get_current_user
+    from fastapi.testclient import TestClient
+
+    saved = test_app.dependency_overrides.pop(get_current_user, None)
+    try:
+        resp = TestClient(test_app).get("/api/jobs")
+        assert resp.status_code == 401
+    finally:
+        if saved is not None:
+            test_app.dependency_overrides[get_current_user] = saved
+
+
 def test_get_jobs_filters_by_company(client):
     resp = client.get("/api/jobs", params={"company": "google"})
     jobs = resp.json()
