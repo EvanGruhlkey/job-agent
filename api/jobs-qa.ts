@@ -1,16 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getBackendUrl } from './utils/backendUrl';
 import { forwardResponse } from './utils/forwardResponse';
-import {
-  buildAuthenticatedProxyHeaders,
-  rejectUnlessAuthorized,
-} from './utils/proxyAuth';
+import { getInternalKeyHeader } from './utils/internalKey';
 
 const METHODS_WITH_BODY = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!rejectUnlessAuthorized(req, res)) return;
-
   const { path, ...queryParams } = req.query;
 
   // Build the path from the catch-all route
@@ -29,9 +24,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const backendUrl = getBackendUrl(req);
   const targetUrl = `${backendUrl}/api/jobs-qa${targetPath ? `/${targetPath}` : ''}${queryString}`;
 
-  const headers: Record<string, string> = buildAuthenticatedProxyHeaders(req, {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
-  });
+    ...getInternalKeyHeader(),
+  };
+  // /api/jobs-qa is admin-gated on the backend (require_admin). The proxy must
+  // forward the caller's Bearer token or every request comes through anonymous
+  // and the backend returns 401.
+  if (req.headers.authorization) {
+    headers['Authorization'] = req.headers.authorization;
+  }
 
   const fetchOptions: RequestInit = {
     method: req.method,

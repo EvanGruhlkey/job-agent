@@ -6,7 +6,7 @@ import psycopg2
 from fastapi import APIRouter, Depends, HTTPException, Path
 from psycopg2.extensions import connection as Connection
 
-from ..auth.dependencies import TokenClaims, get_current_user
+from ..auth.dependencies import TokenClaims, get_current_user, get_optional_user
 from ..auth.jwt import get_normalized_subject
 from ..dependencies import get_db
 from ..models import (
@@ -74,7 +74,7 @@ def _resolve_optional_user_id(conn: Connection, user: TokenClaims | None) -> str
 @router.get("", response_model=FeatureListResponse)
 def list_features(
     conn: Connection = Depends(get_db),
-    user: TokenClaims = Depends(get_current_user),
+    user: TokenClaims | None = Depends(get_optional_user),
 ) -> FeatureListResponse:
     user_id = _resolve_optional_user_id(conn, user)
     try:

@@ -1,7 +1,10 @@
 """Public curated-companies directory endpoint.
 
-Read-only: returns every enabled company with its directory content (blurb +
-accomplishment), alphabetically by display name. Requires a signed-in user.
+Read-only, no auth, no query params: returns every enabled company with its
+directory content (blurb + accomplishment), alphabetically by display name. The
+frontend does search / alphabetical sort / infinite-scroll reveal client-side
+over this single payload (~130 short rows), mirroring the ``/api/features`` +
+Changelog design.
 """
 
 import logging
@@ -10,7 +13,6 @@ import psycopg2
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg2.extensions import connection as Connection
 
-from ..auth.dependencies import TokenClaims, get_current_user
 from ..dependencies import get_db
 from ..models import CompanyListResponse, CompanyProfileResponse
 from ..services.companies_service import list_enabled_companies_with_profiles
@@ -21,10 +23,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=CompanyListResponse)
-def list_companies(
-    conn: Connection = Depends(get_db),
-    _user: TokenClaims = Depends(get_current_user),
-) -> CompanyListResponse:
+def list_companies(conn: Connection = Depends(get_db)) -> CompanyListResponse:
     try:
         rows = list_enabled_companies_with_profiles(conn)
     except psycopg2.Error:

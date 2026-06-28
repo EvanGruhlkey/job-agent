@@ -1,25 +1,18 @@
 import { Box, Container, Typography } from '@mui/material';
 import { useListCuratedCompaniesQuery } from '../../features/companies/companiesApi';
-import { useAuth } from '../../features/auth/useAuth';
 import { LoadingState } from '../../components/shared/LoadingIndicator';
 import { ErrorState } from '../../components/shared/ErrorDisplay';
-import { SignInPrompt } from '../../components/shared/SignInPrompt/SignInPrompt';
-import { extractErrorMessage, isUnauthorizedError } from '../../lib/errors';
-import { SIGN_IN_OVERLAY_MESSAGES } from '../../constants/messages';
+import { extractErrorMessage } from '../../lib/errors';
 import { CuratedCompaniesGrid } from './CuratedCompaniesGrid';
 import { RESPONSIVE } from '../../config/responsive';
 
-/** Directory of tracked companies. Requires sign-in; data comes from `/api/companies`. */
+/**
+ * Public directory of every company this site tracks. Data is sourced from the
+ * backend `companies` table (via `/api/companies`), so a company added to the
+ * DB appears here automatically and is discoverable by other agents.
+ */
 export function CuratedCompaniesPage() {
-  const { isAuthenticated, isEnabled, isLoading: authLoading } = useAuth();
-  const { data, isLoading, isError, error, refetch } = useListCuratedCompaniesQuery(undefined, {
-    skip: !isAuthenticated || authLoading,
-  });
-
-  const showSignIn =
-    isEnabled &&
-    !authLoading &&
-    (!isAuthenticated || (isError && error != null && isUnauthorizedError(error)));
+  const { data, isLoading, isError, error, refetch } = useListCuratedCompaniesQuery();
 
   return (
     <Container maxWidth="xl" sx={{ py: RESPONSIVE.spacing.pageMarginY }}>
@@ -33,21 +26,9 @@ export function CuratedCompaniesPage() {
         </Typography>
       </Box>
 
-      {showSignIn ? (
-        <Box sx={{ py: 8 }}>
-          <SignInPrompt
-            title="Sign in to browse companies."
-            subtitle={SIGN_IN_OVERLAY_MESSAGES.SUBTITLE}
-            buttonText={SIGN_IN_OVERLAY_MESSAGES.BUTTON_TEXT}
-          />
-        </Box>
-      ) : null}
+      {isLoading && <LoadingState size={60} minHeight={400} caption="Loading companies…" />}
 
-      {!showSignIn && isLoading && (
-        <LoadingState size={60} minHeight={400} caption="Loading companies…" />
-      )}
-
-      {!showSignIn && isError && !isUnauthorizedError(error) && (
+      {isError && (
         <ErrorState
           inline
           message={extractErrorMessage(error, 'Failed to load companies.')}
@@ -55,9 +36,7 @@ export function CuratedCompaniesPage() {
         />
       )}
 
-      {!showSignIn && !isLoading && !isError && data && (
-        <CuratedCompaniesGrid companies={data} />
-      )}
+      {!isLoading && !isError && data && <CuratedCompaniesGrid companies={data} />}
     </Container>
   );
 }

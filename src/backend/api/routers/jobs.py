@@ -5,7 +5,6 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from psycopg2.extensions import connection as Connection
 
-from ..auth.dependencies import TokenClaims, get_current_user
 from ..dependencies import get_db
 from ..models import COMPANY_PATTERN, ENABLED_COMPANY_ID_PATTERN, JobListingResponse
 from ..services.database import get_jobs, get_job_by_id
@@ -26,7 +25,6 @@ _COMPANY_ID_RE = re.compile(ENABLED_COMPANY_ID_PATTERN)
 @router.get("", response_model=list[JobListingResponse])
 def list_jobs(
     conn: Connection = Depends(get_db),
-    _user: TokenClaims = Depends(get_current_user),
     company: str | None = Query(default=None, pattern=COMPANY_PATTERN),
     companies: str | None = Query(
         default=None,
@@ -93,7 +91,6 @@ def get_job(
     source_id: str = Path(max_length=100),
     job_id: str = Path(max_length=200),
     conn: Connection = Depends(get_db),
-    _user: TokenClaims = Depends(get_current_user),
 ) -> JobListingResponse:
     """Get a single job by composite ``(source_id, id)`` key.
 

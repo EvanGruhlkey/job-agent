@@ -26,19 +26,6 @@ def test_returns_empty_list_when_no_companies(client, db_conn):
     assert resp.json() == {"companies": []}
 
 
-def test_list_companies_401_without_auth(test_app):
-    from api.auth.dependencies import get_current_user
-    from fastapi.testclient import TestClient
-
-    saved = test_app.dependency_overrides.pop(get_current_user, None)
-    try:
-        resp = TestClient(test_app).get("/api/companies")
-        assert resp.status_code == 401
-    finally:
-        if saved is not None:
-            test_app.dependency_overrides[get_current_user] = saved
-
-
 def test_returns_companies_sorted_alphabetically_case_insensitive(client, db_conn):
     _insert_company(db_conn, "zoox", "Zoox", "lever")
     _insert_company(db_conn, "airbnb", "Airbnb", "greenhouse")

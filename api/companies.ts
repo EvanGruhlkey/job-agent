@@ -1,16 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { getBackendUrl } from './utils/backendUrl';
 import { forwardResponse } from './utils/forwardResponse';
-import {
-  buildAuthenticatedProxyHeaders,
-  rejectUnlessAuthorized,
-} from './utils/proxyAuth';
+import { getInternalKeyHeader } from './utils/internalKey';
 
+// Public proxy for the curated-companies directory. Mirrors api/features.ts but
+// is read-only and unauthenticated (the backend endpoint takes no auth). The
+// Authorization passthrough is kept harmless: forwarded only if a caller
+// happens to send one, never required.
 const METHODS_WITH_BODY = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!rejectUnlessAuthorized(req, res)) return;
-
   const { path, ...queryParams } = req.query;
 
   const pathParts = Array.isArray(path) ? path : [path].filter(Boolean);
@@ -27,9 +26,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const backendUrl = getBackendUrl(req);
   const targetUrl = `${backendUrl}/api/companies${targetPath ? `/${targetPath}` : ''}${queryString}`;
 
-  const headers: Record<string, string> = buildAuthenticatedProxyHeaders(req, {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
     'Content-Type': 'application/json',
-  });
+    ...getInternalKeyHeader(),
+  };
+  if (req.headers.authorization) {
+    headers['Authorization'] = req.headers.authorization;
+  }
 
   const fetchOptions: RequestInit = {
     method: req.method,
