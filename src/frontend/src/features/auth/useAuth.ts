@@ -125,10 +125,30 @@ const BYPASS_AUTH_RESULT: AuthResult = {
   getToken: async () => 'bypass-frontend-only-token',
 };
 
+const PUBLIC_AUTH_RESULT: AuthResult = {
+  isEnabled: false,
+  isAuthenticated: false,
+  isLoading: false,
+  user: undefined,
+  login: async () => {
+    // Auth is intentionally disabled for the public app.
+  },
+  logout: () => {
+    // Auth is intentionally disabled for the public app.
+  },
+  getToken: async () => {
+    throw new NotAuthenticatedError();
+  },
+};
+
 // Intentionally does NOT call any hooks that require Auth0/Google context, so
 // it can run without AuthProviders mounting its real providers.
 function useAuthBypass(): AuthResult {
   return BYPASS_AUTH_RESULT;
+}
+
+function useAuthPublic(): AuthResult {
+  return PUBLIC_AUTH_RESULT;
 }
 
 // Module-level dispatch: the env var is inlined at build time, so exactly one
@@ -136,4 +156,8 @@ function useAuthBypass(): AuthResult {
 // satisfied (no runtime conditional hook calls) and guarantees useAuth0() /
 // useGoogleCredential() are never invoked in bypass builds where their
 // providers are not mounted.
-export const useAuth = AUTH_CONFIG.bypassEnabled ? useAuthBypass : useAuthReal;
+export const useAuth = !AUTH_CONFIG.isEnabled
+  ? useAuthPublic
+  : AUTH_CONFIG.bypassEnabled
+    ? useAuthBypass
+    : useAuthReal;

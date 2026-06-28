@@ -14,11 +14,15 @@ export interface AuthConfig {
   bypassEnabled: boolean;
 }
 
+// Careerbase is a public read-only app. Keep the UI auth system disabled even
+// if old Auth0/Google env vars are still present in a deploy environment.
+const FRONTEND_AUTH_ENABLED = false;
+
 // Guarded so module evaluation doesn't crash in non-DOM contexts
 // (SSR, Node-only tests that don't pull in jsdom).
 const defaultRedirectUri = typeof window !== 'undefined' ? window.location.origin : '';
 
-const bypassEnabled = import.meta.env.VITE_AUTH_BYPASS === 'true';
+const bypassEnabled = FRONTEND_AUTH_ENABLED && import.meta.env.VITE_AUTH_BYPASS === 'true';
 
 export const AUTH_CONFIG: AuthConfig = {
   domain: import.meta.env.VITE_AUTH0_DOMAIN ?? '',
@@ -26,7 +30,9 @@ export const AUTH_CONFIG: AuthConfig = {
   redirectUri: import.meta.env.VITE_AUTH0_REDIRECT_URI || defaultRedirectUri,
   audience: import.meta.env.VITE_AUTH0_AUDIENCE ?? '',
   googleClientId: import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '',
-  isEnabled: !!(import.meta.env.VITE_AUTH0_DOMAIN && import.meta.env.VITE_AUTH0_CLIENT_ID),
+  isEnabled:
+    FRONTEND_AUTH_ENABLED &&
+    !!(import.meta.env.VITE_AUTH0_DOMAIN && import.meta.env.VITE_AUTH0_CLIENT_ID),
   bypassEnabled,
 };
 

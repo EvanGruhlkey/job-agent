@@ -6,7 +6,6 @@ import { PostHogProvider } from '@posthog/react';
 import App from './app/App';
 import { store } from './app/store';
 import { theme } from './config/theme';
-import { AuthProviders } from './components/shared/AuthProviders';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { CookieConsentBanner } from './components/shared/CookieConsentBanner';
 import { POSTHOG_CONFIG } from './config/posthog';
@@ -16,15 +15,13 @@ import './index.css';
 const app = (
   <React.StrictMode>
     <ErrorBoundary>
-      <AuthProviders>
-        <Provider store={store}>
-          <ThemeProvider theme={theme}>
-            <CssBaseline />
-            <App />
-            <CookieConsentBanner />
-          </ThemeProvider>
-        </Provider>
-      </AuthProviders>
+      <Provider store={store}>
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          <App />
+          <CookieConsentBanner />
+        </ThemeProvider>
+      </Provider>
     </ErrorBoundary>
   </React.StrictMode>
 );

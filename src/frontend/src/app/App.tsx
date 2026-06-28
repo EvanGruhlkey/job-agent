@@ -4,14 +4,8 @@ import { CuratedCompaniesPage } from '../pages/CuratedCompaniesPage';
 import { RecentJobPostingsPage } from '../pages/RecentJobPostingsPage/RecentJobPostingsPage';
 import { ROUTES } from '../config/routes';
 import { usePostHogPageview } from '../features/analytics/usePostHogPageview';
-import { useEnabledCompanies } from '../features/preferences/useEnabledCompanies';
-import { useFeaturesAuthBridge } from '../features/features/useFeaturesAuthBridge';
-import { useHydrateSavedFilters } from '../features/savedFilters/useHydrateSavedFilters';
 
 function AppContent() {
-  useEnabledCompanies();
-  useFeaturesAuthBridge();
-  useHydrateSavedFilters();
   usePostHogPageview();
 
   return (
