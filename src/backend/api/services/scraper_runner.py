@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import re
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,6 +73,26 @@ def _bounded_tail_text(tail: bytearray, max_bytes: int) -> str:
     return bytes(tail[-max_bytes:]).decode("utf-8", errors="replace")
 
 
+def _stream_completed_output(
+    output: bytes,
+    max_bytes: int,
+    line_logger: Callable[[str], None],
+    tail_out: bytearray,
+) -> None:
+    """Replay completed subprocess output into logs and the bounded tail."""
+    for raw_line in output.splitlines():
+        line = raw_line + b"\n"
+        tail_out.extend(line)
+        if len(tail_out) > max_bytes * 2:
+            del tail_out[:-max_bytes]
+        text = raw_line.decode("utf-8", errors="replace").rstrip()
+        if text:
+            try:
+                line_logger(text)
+            except Exception:
+                pass
+
+
 @dataclass
 class ScraperResult:
     exit_code: int
@@ -113,6 +135,86 @@ async def run_scraper(config: Settings, company: str) -> ScraperResult:
             safe_args.append(arg)
     logger.info("Running scraper: %s", " ".join(safe_args))
 
+    def _emit_line(text: str) -> None:
+        match = _CHILD_LEVEL_RE.search(text)
+        if match:
+            level = getattr(logging, match.group(1))
+        elif text.startswith("Traceback") or "Traceback (most recent call last)" in text:
+            level = logging.ERROR
+        else:
+            level = logging.INFO
+        logger.log(level, "scraper[%s] %s", company, text)
+
+    def _run_scraper_sync() -> ScraperResult:
+        tail_buffer = bytearray()
+        try:
+            process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            try:
+                output, _ = process.communicate(
+                    timeout=config.scraper_timeout_minutes * 60
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(
+                    "Scraper timed out after %d minutes, killing process",
+                    config.scraper_timeout_minutes,
+                )
+                process.kill()
+                output, _ = process.communicate(timeout=KILL_WAIT_SECONDS)
+                _stream_completed_output(
+                    output or b"",
+                    MAX_STDERR_BYTES,
+                    _emit_line,
+                    tail_buffer,
+                )
+                tail_text = _bounded_tail_text(tail_buffer, MAX_STDERR_BYTES)
+                error_message = (
+                    f"Process timed out after {config.scraper_timeout_minutes} minutes"
+                )
+                if tail_text:
+                    error_message = f"{error_message}\n--- last stderr tail ---\n{tail_text}"
+                return ScraperResult(
+                    exit_code=-2,
+                    output="",
+                    error=error_message,
+                    company=company,
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                )
+
+            _stream_completed_output(
+                output or b"",
+                MAX_STDERR_BYTES,
+                _emit_line,
+                tail_buffer,
+            )
+            exit_code = process.returncode if process.returncode is not None else -3
+            logger.info("Scraper exited with code %d", exit_code)
+            return ScraperResult(
+                exit_code=exit_code,
+                output="",
+                error=_bounded_tail_text(tail_buffer, MAX_STDERR_BYTES),
+                company=company,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except (FileNotFoundError, PermissionError) as ex:
+            logger.error(
+                "Scraper configuration error for %s: %s: %s",
+                company, type(ex).__name__, ex,
+            )
+            return ScraperResult(
+                exit_code=-1,
+                output="",
+                error=f"{type(ex).__name__}: {ex}",
+                company=company,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+    if sys.platform == "win32":
+        return await asyncio.to_thread(_run_scraper_sync)
+
     try:
         process = await asyncio.create_subprocess_exec(
             *args,
@@ -126,16 +228,6 @@ async def run_scraper(config: Settings, company: str) -> ScraperResult:
         )
 
         tail_buffer = bytearray()
-
-        def _emit_line(text: str) -> None:
-            match = _CHILD_LEVEL_RE.search(text)
-            if match:
-                level = getattr(logging, match.group(1))
-            elif text.startswith("Traceback") or "Traceback (most recent call last)" in text:
-                level = logging.ERROR
-            else:
-                level = logging.INFO
-            logger.log(level, "scraper[%s] %s", company, text)
 
         # stdout is guaranteed non-None: the process is spawned with
         # stdout=PIPE (asyncio types it Optional regardless). Raise rather than

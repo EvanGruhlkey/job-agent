@@ -32,7 +32,7 @@ pip install -r scripts/requirements.txt
 .venv/bin/playwright install chromium
 
 # 3. Start the backend
-PYTHONPATH=. uvicorn src.backend.api.main:app --host 0.0.0.0 --port 8000 --reload
+npm run dev:backend -- --host 0.0.0.0 --port 8000 --reload
 
 # 4. In another terminal, start the frontend
 npm run dev:vercel
@@ -77,6 +77,7 @@ See `scripts/README.md` for the full list of CLI options, output format, and tro
 | Command | Description |
 | --- | --- |
 | `npm run dev:vercel` | Start frontend with API proxies |
+| `npm run dev:backend` | Start the FastAPI backend and background scrapers |
 | `npm run build` | Production build |
 | `npm test` | Run tests |
 | `npm run type-check` | TypeScript type checking |

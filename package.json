@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm run dev -w src/frontend",
     "build": "npm run build -w src/frontend",
+    "dev:backend": "python scripts/run_backend.py",
     "test": "npm run test -w src/frontend",
     "type-check": "npm run type-check -w src/frontend",
     "lint": "npm run lint -w src/frontend",
