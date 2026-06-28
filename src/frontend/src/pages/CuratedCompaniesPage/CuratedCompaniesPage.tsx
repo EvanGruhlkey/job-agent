@@ -4,7 +4,7 @@ import { useAuth } from '../../features/auth/useAuth';
 import { LoadingState } from '../../components/shared/LoadingIndicator';
 import { ErrorState } from '../../components/shared/ErrorDisplay';
 import { SignInPrompt } from '../../components/shared/SignInPrompt/SignInPrompt';
-import { extractErrorMessage } from '../../lib/errors';
+import { extractErrorMessage, isUnauthorizedError } from '../../lib/errors';
 import { SIGN_IN_OVERLAY_MESSAGES } from '../../constants/messages';
 import { CuratedCompaniesGrid } from './CuratedCompaniesGrid';
 import { RESPONSIVE } from '../../config/responsive';
@@ -12,12 +12,14 @@ import { RESPONSIVE } from '../../config/responsive';
 /** Directory of tracked companies. Requires sign-in; data comes from `/api/companies`. */
 export function CuratedCompaniesPage() {
   const { isAuthenticated, isEnabled, isLoading: authLoading } = useAuth();
-  const shouldFetch = !isEnabled || isAuthenticated;
   const { data, isLoading, isError, error, refetch } = useListCuratedCompaniesQuery(undefined, {
-    skip: !shouldFetch || authLoading,
+    skip: !isAuthenticated || authLoading,
   });
 
-  const showSignIn = isEnabled && !authLoading && !isAuthenticated;
+  const showSignIn =
+    isEnabled &&
+    !authLoading &&
+    (!isAuthenticated || (isError && error != null && isUnauthorizedError(error)));
 
   return (
     <Container maxWidth="xl" sx={{ py: RESPONSIVE.spacing.pageMarginY }}>
@@ -45,7 +47,7 @@ export function CuratedCompaniesPage() {
         <LoadingState size={60} minHeight={400} caption="Loading companies…" />
       )}
 
-      {!showSignIn && isError && (
+      {!showSignIn && isError && !isUnauthorizedError(error) && (
         <ErrorState
           inline
           message={extractErrorMessage(error, 'Failed to load companies.')}

@@ -79,10 +79,9 @@ export interface UseAllJobsProgressResult {
  * ```
  */
 export function useAllJobsProgress(): UseAllJobsProgressResult {
-  const { isAuthenticated, isEnabled, isLoading: authLoading } = useAuth();
-  const shouldFetchJobs = !isEnabled || isAuthenticated;
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
   const { data, isLoading, isFetching, error, isError } = useGetAllJobsQuery(undefined, {
-    skip: !shouldFetchJobs || authLoading,
+    skip: !isAuthenticated || authLoading,
   });
 
   // Combine loading states: RTK Query states + custom streaming flag

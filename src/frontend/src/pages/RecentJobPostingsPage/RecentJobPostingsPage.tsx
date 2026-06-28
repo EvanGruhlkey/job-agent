@@ -13,19 +13,21 @@ import { RecentJobsList } from '../../components/recent-jobs-page/RecentJobsList
 import { ERROR_MESSAGES, SIGN_IN_OVERLAY_MESSAGES } from '../../constants/messages';
 import { ErrorState } from '../../components/shared/ErrorDisplay';
 import { SignInPrompt } from '../../components/shared/SignInPrompt/SignInPrompt';
-import { extractErrorMessage } from '../../lib/errors';
+import { extractErrorMessage, isUnauthorizedError } from '../../lib/errors';
 
 export function RecentJobPostingsPage() {
   const { isAuthenticated, isEnabled, isLoading: authLoading } = useAuth();
-  const shouldFetchJobs = !isEnabled || isAuthenticated;
   const { data, error } = useGetAllJobsQuery(undefined, {
-    skip: !shouldFetchJobs || authLoading,
+    skip: !isAuthenticated || authLoading,
   });
   const metadata = useAppSelector(selectRecentJobsMetadata);
   const timeBasedCounts = useAppSelector(selectRecentJobsTimeBasedCounts);
   const demoModeEnabled = useAppSelector(selectDemoModeEnabled);
 
-  const showSignIn = isEnabled && !authLoading && !isAuthenticated;
+  const showSignIn =
+    isEnabled &&
+    !authLoading &&
+    (!isAuthenticated || (error != null && isUnauthorizedError(error)));
 
   return (
     <div className="mx-auto w-full max-w-[1340px] px-4 py-6 md:px-8 md:py-8 xl:px-12">
@@ -43,7 +45,7 @@ export function RecentJobPostingsPage() {
         </Box>
       ) : null}
 
-      {!showSignIn && error && !demoModeEnabled ? (
+      {!showSignIn && error && !demoModeEnabled && !isUnauthorizedError(error) ? (
         <div className="mb-4">
           <ErrorState inline message={extractErrorMessage(error, ERROR_MESSAGES.LOAD_JOBS_FAILED)} />
         </div>

@@ -82,3 +82,15 @@ export function extractErrorMessage(err: unknown, fallback: string = 'Unknown er
 
   return fallback;
 }
+
+/** True when an RTK Query / fetch error represents missing or invalid auth. */
+export function isUnauthorizedError(err: unknown): boolean {
+  if (err == null || typeof err !== 'object') {
+    return false;
+  }
+  if ('status' in err && (err as { status: unknown }).status === 401) {
+    return true;
+  }
+  const message = extractErrorMessage(err, '').toLowerCase();
+  return message.includes('unauthorized') || message.includes('authentication required');
+}
