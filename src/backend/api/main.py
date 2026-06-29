@@ -12,6 +12,7 @@ import psycopg2
 from psycopg2.extensions import connection as Connection
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .auth.internal_key import require_internal_key, warn_if_unset
@@ -302,6 +303,8 @@ app = FastAPI(title="Jobs API", lifespan=lifespan)
 # order; if CORS is inside the gate, preflight OPTIONS without the header
 # would be rejected before CORS can answer.
 app.middleware("http")(require_internal_key)
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,

@@ -72,6 +72,7 @@ class JobListing(Base):
         Index("idx_job_listings_status", "status"),
         Index("idx_job_listings_company", "company"),
         Index("idx_job_listings_last_seen", "last_seen_at"),
+        Index("idx_job_listings_company_status_last_seen", "company", "status", "last_seen_at"),
     )
 
 

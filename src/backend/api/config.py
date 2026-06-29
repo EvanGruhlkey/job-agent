@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     scraper_scripts_path: str = "../../scripts"
     scraper_python_path: str = "python3"
     background_workers_enabled: bool = True
+    jobs_cache_ttl_seconds: int = Field(default=120, ge=0, le=3600)
+    jobs_cache_max_entries: int = Field(default=64, ge=1, le=1024)
 
     # Database pool
     db_pool_min: int = Field(default=1, ge=1, le=20)

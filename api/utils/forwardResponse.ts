@@ -22,6 +22,15 @@ import type { VercelResponse } from '@vercel/node';
  */
 export async function forwardResponse(fetchResponse: Response, res: VercelResponse): Promise<void> {
   const status = fetchResponse.status;
+  for (const header of [
+    'cache-control',
+    'etag',
+    'last-modified',
+    'x-careerbase-cache',
+  ]) {
+    const value = fetchResponse.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
   if (
     status === 204 ||
     status === 205 ||
@@ -38,11 +47,8 @@ export async function forwardResponse(fetchResponse: Response, res: VercelRespon
       res.status(fetchResponse.status).end();
       return;
     }
-    try {
-      res.status(fetchResponse.status).json(JSON.parse(text));
-    } catch {
-      res.status(fetchResponse.status).json({ error: text });
-    }
+    res.setHeader('content-type', contentType);
+    res.status(fetchResponse.status).send(text);
     return;
   }
   const text = await fetchResponse.text();

@@ -1,4 +1,5 @@
 import { createApi, fakeBaseQuery } from '@reduxjs/toolkit/query/react';
+import { current } from '@reduxjs/toolkit';
 import type { Job, FetchProgress, Company } from '../../types';
 import { getCompanyById, COMPANIES } from '../../config/companies';
 import type { FetchJobsResult } from '../../api/types';
@@ -32,6 +33,133 @@ interface AllJobsQueryResult {
   errors: Record<string, string>;
   progress: FetchProgress;
   isStreaming: boolean;
+}
+
+const ALL_JOBS_BROWSER_CACHE_DB = 'careerbase-jobs-cache';
+const ALL_JOBS_BROWSER_CACHE_STORE = 'query-results';
+const ALL_JOBS_BROWSER_CACHE_KEY = 'all-jobs';
+const ALL_JOBS_BROWSER_CACHE_VERSION = 1;
+const ALL_JOBS_BROWSER_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
+
+interface AllJobsBrowserCacheRecord {
+  key: string;
+  version: number;
+  savedAt: number;
+  data: AllJobsQueryResult;
+}
+
+const createEmptyAllJobsResult = (isStreaming = true): AllJobsQueryResult => ({
+  byCompanyId: {},
+  metadata: {},
+  errors: {},
+  progress: {
+    completed: 0,
+    total: COMPANIES.length,
+    companies: COMPANIES.map((c) => ({
+      companyId: c.id,
+      status: 'pending' as const,
+    })),
+  },
+  isStreaming,
+});
+
+const createCachedAllJobsResult = (data: AllJobsQueryResult): AllJobsQueryResult => ({
+  ...data,
+  progress: {
+    completed: data.progress.companies.filter(
+      (company) => company.status === 'success' || company.status === 'error'
+    ).length,
+    total: COMPANIES.length,
+    companies: COMPANIES.map((company) => {
+      const existing = data.progress.companies.find((c) => c.companyId === company.id);
+      return (
+        existing ?? {
+          companyId: company.id,
+          status: 'pending' as const,
+        }
+      );
+    }),
+  },
+  // Cached data should render as complete immediately. The live refresh still
+  // runs through onCacheEntryAdded and toggles this while it updates in place.
+  isStreaming: false,
+});
+
+function openAllJobsCacheDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    const request = indexedDB.open(ALL_JOBS_BROWSER_CACHE_DB, ALL_JOBS_BROWSER_CACHE_VERSION);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(ALL_JOBS_BROWSER_CACHE_STORE, { keyPath: 'key' });
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+    request.onblocked = () => resolve(null);
+  });
+}
+
+async function readAllJobsBrowserCache(): Promise<AllJobsQueryResult | null> {
+  const db = await openAllJobsCacheDb();
+  if (!db) return null;
+
+  return new Promise((resolve) => {
+    const transaction = db.transaction(ALL_JOBS_BROWSER_CACHE_STORE, 'readonly');
+    const store = transaction.objectStore(ALL_JOBS_BROWSER_CACHE_STORE);
+    const request = store.get(ALL_JOBS_BROWSER_CACHE_KEY);
+    request.onsuccess = () => {
+      const record = request.result as AllJobsBrowserCacheRecord | undefined;
+      if (
+        !record ||
+        record.version !== ALL_JOBS_BROWSER_CACHE_VERSION ||
+        Date.now() - record.savedAt > ALL_JOBS_BROWSER_CACHE_MAX_AGE_MS
+      ) {
+        resolve(null);
+        return;
+      }
+      resolve(createCachedAllJobsResult(record.data));
+    };
+    request.onerror = () => resolve(null);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      resolve(null);
+    };
+  });
+}
+
+async function writeAllJobsBrowserCache(data: AllJobsQueryResult): Promise<void> {
+  const db = await openAllJobsCacheDb();
+  if (!db) return;
+
+  return new Promise((resolve) => {
+    const transaction = db.transaction(ALL_JOBS_BROWSER_CACHE_STORE, 'readwrite');
+    const store = transaction.objectStore(ALL_JOBS_BROWSER_CACHE_STORE);
+    try {
+      const cacheableData = JSON.parse(JSON.stringify({
+        ...data,
+        isStreaming: false,
+      })) as AllJobsQueryResult;
+      store.put({
+        key: ALL_JOBS_BROWSER_CACHE_KEY,
+        version: ALL_JOBS_BROWSER_CACHE_VERSION,
+        savedAt: Date.now(),
+        data: cacheableData,
+      } satisfies AllJobsBrowserCacheRecord);
+    } catch {
+      db.close();
+      resolve();
+      return;
+    }
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      resolve();
+    };
+  });
 }
 
 export const jobsApi = createApi({
@@ -85,22 +213,14 @@ export const jobsApi = createApi({
     // All companies endpoint (parallel fetch with streaming progress updates)
     getAllJobs: builder.query<AllJobsQueryResult, void>({
       async queryFn() {
-        // Return initial skeleton data immediately
+        const cachedData = await readAllJobsBrowserCache();
+        if (cachedData) {
+          return { data: cachedData };
+        }
+
+        // Return initial skeleton data immediately when no browser cache exists.
         return {
-          data: {
-            byCompanyId: {},
-            metadata: {},
-            errors: {},
-            progress: {
-              completed: 0,
-              total: COMPANIES.length,
-              companies: COMPANIES.map((c) => ({
-                companyId: c.id,
-                status: 'pending' as const,
-              })),
-            },
-            isStreaming: true,
-          },
+          data: createEmptyAllJobsResult(),
         };
       },
 
@@ -223,9 +343,14 @@ export const jobsApi = createApi({
           await Promise.allSettled([batchedFetch, ...otherFetches]);
 
           // Mark streaming as complete
+          let latestData: AllJobsQueryResult | undefined;
           updateCachedData((draft) => {
             draft.isStreaming = false;
+            latestData = current(draft) as AllJobsQueryResult;
           });
+          if (latestData) {
+            void writeAllJobsBrowserCache(latestData);
+          }
 
           // Wait for cache to be removed before cleanup
           await cacheEntryRemoved;
