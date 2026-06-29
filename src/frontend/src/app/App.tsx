@@ -12,7 +12,7 @@ function AppContent() {
     <Routes>
       <Route path="/" element={<RootLayout />}>
         <Route index element={<RecentJobPostingsPage />} />
-        <Route path={ROUTES.CURATED_COMPANIES} element={<CuratedCompaniesPage />} />
+        <Route path={ROUTES.COMPANIES} element={<CuratedCompaniesPage />} />
         <Route path="*" element={<Navigate to={ROUTES.RECENT_JOBS} replace />} />
       </Route>
     </Routes>

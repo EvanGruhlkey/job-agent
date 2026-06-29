@@ -1,6 +1,6 @@
 export const ROUTES = {
   RECENT_JOBS: '/',
-  CURATED_COMPANIES: '/curated-companies',
+  COMPANIES: '/companies',
 } as const;
 
 export const PRIMARY_NAV_ITEMS = [
@@ -10,7 +10,7 @@ export const PRIMARY_NAV_ITEMS = [
     icon: 'Schedule',
   },
   {
-    path: ROUTES.CURATED_COMPANIES,
+    path: ROUTES.COMPANIES,
     label: 'Companies',
     icon: 'Business',
   },
