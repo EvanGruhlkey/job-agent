@@ -10,6 +10,7 @@ import { RecentJobsFilters } from '../../components/recent-jobs-page/RecentJobsF
 import { RecentJobsList } from '../../components/recent-jobs-page/RecentJobsList/RecentJobsList';
 import { ERROR_MESSAGES } from '../../constants/messages';
 import { ErrorState } from '../../components/shared/ErrorDisplay';
+import { LoadingState } from '../../components/shared/LoadingIndicator';
 import { extractErrorMessage } from '../../lib/errors';
 
 export function RecentJobPostingsPage() {
@@ -17,6 +18,10 @@ export function RecentJobPostingsPage() {
   const metadata = useAppSelector(selectRecentJobsMetadata);
   const timeBasedCounts = useAppSelector(selectRecentJobsTimeBasedCounts);
   const demoModeEnabled = useAppSelector(selectDemoModeEnabled);
+  const loadedJobCount = data
+    ? Object.values(data.byCompanyId).reduce((total, jobs) => total + jobs.length, 0)
+    : 0;
+  const showInitialLoading = !demoModeEnabled && !error && (data?.isStreaming ?? true) && loadedJobCount === 0;
 
   return (
     <div className="mx-auto w-full max-w-[1340px] px-4 py-6 md:px-8 md:py-8 xl:px-12">
@@ -30,7 +35,11 @@ export function RecentJobPostingsPage() {
         </div>
       ) : null}
 
-      {(demoModeEnabled || (!error && data)) && (
+      {showInitialLoading ? (
+        <LoadingState minHeight="55vh" size={38} />
+      ) : null}
+
+      {(demoModeEnabled || (!showInitialLoading && !error && data)) && (
         <>
           <RecentJobsMetrics
             totalJobs={metadata.filteredCount}
