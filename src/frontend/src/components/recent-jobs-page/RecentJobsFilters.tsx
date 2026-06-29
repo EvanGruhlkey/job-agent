@@ -21,6 +21,8 @@ import {
 import { MultiSelectAutocomplete } from '../shared/filters/MultiSelectAutocomplete.tsx';
 import { SearchTagsInput } from '../shared/filters/SearchTagsInput.tsx';
 import { TimeWindowSelect } from '../shared/filters/TimeWindowSelect.tsx';
+import { captureAnalyticsEvent } from '../../lib/analytics.ts';
+import type { SearchTag } from '../../types';
 
 export function RecentJobsFilters() {
   const dispatch = useAppDispatch();
@@ -41,7 +43,14 @@ export function RecentJobsFilters() {
   const handleAddCompany = useCallback(
     (name: string) => {
       const company = availableCompanies.find((c) => c.name === name);
-      if (company) dispatch(addRecentJobsCompany(company.id));
+      if (company) {
+        dispatch(addRecentJobsCompany(company.id));
+        captureAnalyticsEvent('recent_jobs_filter_changed', {
+          filter: 'company',
+          action: 'add',
+          companyId: company.id,
+        });
+      }
     },
     [availableCompanies, dispatch]
   );
@@ -49,18 +58,98 @@ export function RecentJobsFilters() {
   const handleRemoveCompany = useCallback(
     (name: string) => {
       const company = availableCompanies.find((c) => c.name === name);
-      if (company) dispatch(removeRecentJobsCompany(company.id));
+      if (company) {
+        dispatch(removeRecentJobsCompany(company.id));
+        captureAnalyticsEvent('recent_jobs_filter_changed', {
+          filter: 'company',
+          action: 'remove',
+          companyId: company.id,
+        });
+      }
     },
     [availableCompanies, dispatch]
   );
+
+  const handleAddSearchTag = useCallback(
+    (tag: SearchTag) => {
+      dispatch(addRecentJobsSearchTag(tag));
+      captureAnalyticsEvent('recent_jobs_filter_changed', {
+        filter: 'search',
+        action: 'add',
+        mode: tag.mode,
+        tagLength: tag.text.length,
+      });
+    },
+    [dispatch]
+  );
+
+  const handleRemoveSearchTag = useCallback(
+    (text: string) => {
+      dispatch(removeRecentJobsSearchTag(text));
+      captureAnalyticsEvent('recent_jobs_filter_changed', {
+        filter: 'search',
+        action: 'remove',
+      });
+    },
+    [dispatch]
+  );
+
+  const handleToggleSearchTagMode = useCallback(
+    (text: string) => {
+      dispatch(toggleRecentJobsSearchTagMode(text));
+      captureAnalyticsEvent('recent_jobs_filter_changed', {
+        filter: 'search',
+        action: 'toggle_mode',
+      });
+    },
+    [dispatch]
+  );
+
+  const handleTimeWindowChange = useCallback(
+    (timeWindow: typeof filters.timeWindow) => {
+      dispatch(setRecentJobsTimeWindow(timeWindow));
+      captureAnalyticsEvent('recent_jobs_filter_changed', {
+        filter: 'time_window',
+        value: timeWindow,
+      });
+    },
+    [dispatch]
+  );
+
+  const handleAddLocation = useCallback(
+    (location: string) => {
+      dispatch(addRecentJobsLocation(location));
+      captureAnalyticsEvent('recent_jobs_filter_changed', {
+        filter: 'location',
+        action: 'add',
+      });
+    },
+    [dispatch]
+  );
+
+  const handleRemoveLocation = useCallback(
+    (location: string) => {
+      dispatch(removeRecentJobsLocation(location));
+      captureAnalyticsEvent('recent_jobs_filter_changed', {
+        filter: 'location',
+        action: 'remove',
+      });
+    },
+    [dispatch]
+  );
+
+  const handleResetFilters = useCallback(() => {
+    dispatch(resetRecentJobsFilters());
+    captureAnalyticsEvent('recent_jobs_filters_reset');
+  }, [dispatch]);
 
   return (
     <div className="mb-5 space-y-4">
       <SearchTagsInput
         value={filters.searchTags || []}
-        onAdd={(tag) => dispatch(addRecentJobsSearchTag(tag))}
-        onRemove={(text) => dispatch(removeRecentJobsSearchTag(text))}
-        onToggleMode={(text) => dispatch(toggleRecentJobsSearchTagMode(text))}
+        onAdd={handleAddSearchTag}
+        onRemove={handleRemoveSearchTag}
+        onToggleMode={handleToggleSearchTagMode}
         placeholder="Search by title, keyword, company, or location..."
         showSearchIcon
       />
@@ -68,7 +157,7 @@ export function RecentJobsFilters() {
       <div className="grid gap-3 lg:grid-cols-[minmax(140px,170px)_minmax(170px,1fr)_minmax(170px,1fr)_150px] lg:items-end">
         <TimeWindowSelect
           value={filters.timeWindow}
-          onChange={(tw) => dispatch(setRecentJobsTimeWindow(tw))}
+          onChange={handleTimeWindowChange}
           label="Time Window"
         />
 
@@ -85,8 +174,8 @@ export function RecentJobsFilters() {
           label="Location"
           options={availableLocations}
           value={filters.location || []}
-          onAdd={(loc) => dispatch(addRecentJobsLocation(loc))}
-          onRemove={(loc) => dispatch(removeRecentJobsLocation(loc))}
+          onAdd={handleAddLocation}
+          onRemove={handleRemoveLocation}
           placeholder="Location"
         />
 
@@ -94,7 +183,7 @@ export function RecentJobsFilters() {
           type="button"
           variant="outline"
           className="h-11 rounded-xl bg-card"
-          onClick={() => dispatch(resetRecentJobsFilters())}
+          onClick={handleResetFilters}
         >
           <RotateCcw className="size-4" />
           Reset filters

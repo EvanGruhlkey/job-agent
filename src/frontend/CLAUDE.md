@@ -60,7 +60,7 @@ Backend-Scraper (api/clients/backendScraperClient.ts) is the only production cli
 **Key Algorithms:**
 - Time Bucketing: lib/timeBucketing.ts (dynamic bucket sizing for graph visualization)
 
-## Analytics (PostHog)
+## Analytics
 
 Opt-in-by-default product analytics. Entirely gated on `VITE_POSTHOG_KEY` — when it
 is unset, `POSTHOG_CONFIG.isEnabled` is `false`, `lib/posthog.ts` never calls
@@ -71,7 +71,7 @@ is unset, `POSTHOG_CONFIG.isEnabled` is `false`, `lib/posthog.ts` never calls
   user clicks **Accept** in the consent banner. Manual SPA pageviews only
   (`capture_pageview: false`).
 - **Consent state:** `ConsentStatus = 'pending' | 'granted' | 'denied'`, managed in
-  `lib/posthogConsent.ts`. `acceptTracking()` switches persistence to
+  `lib/analyticsConsent.ts`. `acceptTracking()` switches persistence to
   `localStorage+cookie`, opts in, starts session recording, and fires a first
   `$pageview`; `declineTracking()` opts out. localStorage/cookies are only written
   after the user consents.
@@ -86,13 +86,14 @@ is unset, `POSTHOG_CONFIG.isEnabled` is `false`, `lib/posthog.ts` never calls
 **Key files** (relative to `src/frontend/src/`):
 - `config/posthog.ts` — PostHog config; `isEnabled` gated on `VITE_POSTHOG_KEY`
 - `lib/posthog.ts` — module-scope init (once, StrictMode-safe)
-- `lib/posthogConsent.ts` — opt-in/opt-out + consent-status helpers
+- `lib/analyticsConsent.ts` — opt-in/opt-out + consent-status helpers
 - `components/shared/CookieConsentBanner.tsx` — consent UI
 - `features/analytics/` — `usePostHogPageview`, `usePostHogIdentify`
 
 **Env vars** (go in `src/frontend/.env.local` — see Gotcha #2):
 - `VITE_POSTHOG_KEY` — PostHog project key (optional; analytics off when unset)
 - `VITE_POSTHOG_HOST` — ingestion host (optional; defaults to `/ingest`)
+- `VITE_GA_MEASUREMENT_ID` — Google Analytics measurement ID (optional)
 
 ## Frontend Foundations
 

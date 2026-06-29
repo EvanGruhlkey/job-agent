@@ -9,6 +9,7 @@ import { EmptyJobListState } from '../../shared/EmptyJobListState.tsx';
 import { useInfiniteScroll } from '../../../hooks/useInfiniteScroll.ts';
 import { INFINITE_SCROLL_CONFIG } from '../../../constants/ui.ts';
 import { EMPTY_STATE_MESSAGES } from '../../../constants/messages.ts';
+import { captureAnalyticsEvent } from '../../../lib/analytics.ts';
 
 /**
  * List of jobs from all companies sorted chronologically
@@ -33,9 +34,14 @@ export function RecentJobsList() {
     // Simulate async loading with microtask delay
     // This gives the browser time to update UI before processing next batch
     setTimeout(() => {
-      setDisplayedCount((prev) =>
-        Math.min(prev + INFINITE_SCROLL_CONFIG.SUBSEQUENT_BATCH_SIZE, jobs.length)
-      );
+      setDisplayedCount((prev) => {
+        const next = Math.min(prev + INFINITE_SCROLL_CONFIG.SUBSEQUENT_BATCH_SIZE, jobs.length);
+        captureAnalyticsEvent('recent_jobs_load_more', {
+          displayedCount: next,
+          totalJobs: jobs.length,
+        });
+        return next;
+      });
       setIsLoadingMore(false);
     }, 0);
   }, [hasMore, isLoadingMore, jobs.length]);

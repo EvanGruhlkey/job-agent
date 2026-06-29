@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_POSTHOG_KEY?: string;
   readonly VITE_POSTHOG_HOST?: string;
+  readonly VITE_GA_MEASUREMENT_ID?: string;
   // Auth vars (existing)
   readonly VITE_AUTH0_DOMAIN?: string;
   readonly VITE_AUTH0_CLIENT_ID?: string;

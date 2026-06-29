@@ -63,6 +63,24 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/ingest/static': {
+        target: 'https://us-assets.i.posthog.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ingest\/static/, '/static'),
+        secure: true,
+      },
+      '/ingest/array': {
+        target: 'https://us-assets.i.posthog.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ingest\/array/, '/array'),
+        secure: true,
+      },
+      '/ingest': {
+        target: 'https://us.i.posthog.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ingest/, ''),
+        secure: true,
+      },
       // Workday proxy removed - use `vercel dev` for local Workday testing
       // The serverless function (api/workday.ts) handles dynamic routing for multiple Workday tenants
     },

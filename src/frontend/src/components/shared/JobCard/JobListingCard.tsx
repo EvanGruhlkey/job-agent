@@ -7,6 +7,7 @@ import type { Job } from '../../../types';
 import { CompanyLogo } from '../CompanyLogo/CompanyLogo.tsx';
 import { getCompanyById } from '../../../config/companies.ts';
 import { useJobMetadata } from './useJobMetadata.ts';
+import { captureAnalyticsEvent } from '../../../lib/analytics.ts';
 
 interface JobListingCardProps {
   job: Job;
@@ -18,10 +19,34 @@ export function JobListingCard({ job }: JobListingCardProps) {
   const companyName = company?.name ?? job.company;
   const recruiterLinkedInUrl = company?.recruiterLinkedInUrl;
 
+  const trackApplyClick = (surface: 'card' | 'button') => {
+    captureAnalyticsEvent('job_apply_clicked', {
+      surface,
+      jobId: job.id,
+      companyId: job.company,
+      titleLength: job.title.length,
+      isRemote: job.isRemote,
+    });
+  };
+
   const openJob = () => {
+    trackApplyClick('card');
     window.open(job.url, '_blank', 'noopener,noreferrer');
   };
   const stop = (event: MouseEvent) => event.stopPropagation();
+
+  const handleApplyButtonClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    stop(event);
+    trackApplyClick('button');
+  };
+
+  const handleRecruiterLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    stop(event);
+    captureAnalyticsEvent('recruiter_link_clicked', {
+      companyId: job.company,
+      jobId: job.id,
+    });
+  };
 
   return (
     <Card
@@ -70,7 +95,7 @@ export function JobListingCard({ job }: JobListingCardProps) {
                   href={recruiterLinkedInUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={stop}
+                  onClick={handleRecruiterLinkClick}
                   className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-foreground underline-offset-4 hover:underline"
                 >
                   Find recruiter and hiring manager posts on LinkedIn
@@ -85,9 +110,8 @@ export function JobListingCard({ job }: JobListingCardProps) {
           <Button
             asChild
             className="group/apply mt-1 h-11 shrink-0 rounded-xl px-5 shadow-sm"
-            onClick={stop}
           >
-            <a href={job.url} target="_blank" rel="noopener noreferrer">
+            <a href={job.url} target="_blank" rel="noopener noreferrer" onClick={handleApplyButtonClick}>
               Apply
               <ArrowRight className="size-4 transition-transform group-hover/apply:translate-x-0.5" />
             </a>

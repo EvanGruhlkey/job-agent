@@ -84,6 +84,15 @@ See `scripts/README.md` for the full list of CLI options, output format, and tro
 | `npm run lint` | ESLint |
 | `npm run format` | Prettier |
 
+## Analytics
+
+Analytics are off unless you provide a project key. The frontend supports:
+
+- `VITE_POSTHOG_KEY` and optional `VITE_POSTHOG_HOST`
+- `VITE_GA_MEASUREMENT_ID`
+
+Users see a consent banner before analytics loads persistent storage or sends events.
+
 ## Repo Structure
 
 ```

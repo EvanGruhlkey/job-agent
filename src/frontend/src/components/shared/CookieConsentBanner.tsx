@@ -1,20 +1,23 @@
 import { useState } from 'react';
-import { Box, Button, Paper, Typography } from '@mui/material';
-import { POSTHOG_CONFIG } from '../../config/posthog';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { ANALYTICS_CONFIG } from '../../config/analytics';
+import { capturePageview } from '../../lib/analytics';
 import {
   acceptTracking,
   declineTracking,
   getConsentStatus,
   type ConsentStatus,
-} from '../../lib/posthogConsent';
+} from '../../lib/analyticsConsent';
 
 export function CookieConsentBanner() {
   const [status, setStatus] = useState<ConsentStatus>(getConsentStatus);
 
-  if (!POSTHOG_CONFIG.isEnabled || status !== 'pending') return null;
+  if (!ANALYTICS_CONFIG.isEnabled || status !== 'pending') return null;
 
   const handleAccept = () => {
     acceptTracking();
+    capturePageview();
     setStatus('granted');
   };
 
@@ -24,42 +27,32 @@ export function CookieConsentBanner() {
   };
 
   return (
-    <Box
-      sx={{
-        position: 'fixed',
-        bottom: 0,
-        right: 0,
-        zIndex: 1400,
-        p: 1.5,
-        pointerEvents: 'none',
-      }}
-    >
-      <Paper
-        elevation={4}
-        sx={{
-          maxWidth: 240,
-          p: 1.5,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 1,
-          pointerEvents: 'auto',
-          borderRadius: 2,
-          border: '1px solid',
-          borderColor: 'divider',
-        }}
+    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-[1400] flex justify-center sm:inset-x-auto sm:right-4 sm:justify-end">
+      <Card
+        size="sm"
+        className="pointer-events-auto w-full max-w-[310px] rounded-lg border-border/80 bg-card/95 py-0 text-card-foreground shadow-md shadow-black/10 backdrop-blur"
       >
-        <Typography variant="caption" color="text.secondary">
-          We'd like to use analytics cookies to understand how you use this site. Decline if you prefer.
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 0.75 }}>
-          <Button size="small" variant="contained" onClick={handleAccept} fullWidth sx={{ py: 0.25, fontSize: '0.7rem' }}>
-            Accept
-          </Button>
-          <Button size="small" variant="outlined" onClick={handleDecline} fullWidth sx={{ py: 0.25, fontSize: '0.7rem' }}>
-            Decline
-          </Button>
-        </Box>
-      </Paper>
-    </Box>
+        <CardContent className="p-3">
+          <div className="text-xs font-semibold leading-4">Analytics</div>
+          <p className="mt-0.5 text-xs leading-4 text-muted-foreground">
+            Help improve job search. No selling data.
+          </p>
+          <div className="mt-2 flex gap-1.5">
+            <Button type="button" size="xs" className="h-7 px-2.5" onClick={handleAccept}>
+              Accept
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              className="h-7 px-2.5"
+              onClick={handleDecline}
+            >
+              Decline
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
